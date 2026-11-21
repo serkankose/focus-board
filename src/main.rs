@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use focus_board::identity::{Identity, Place};
 use focus_board::store::{Cell, Field, Filter, ItemId, ItemSummary, NewItem, Store, Writer};
-use focus_board::{db_path, home_dir, hook};
+use focus_board::{db_path, home_dir, hook, server};
 
 const PAGE: &str = "http://127.0.0.1:8810";
 
@@ -103,6 +103,12 @@ enum Cmd {
     /// Entry points for Claude Code hooks.
     #[command(subcommand)]
     Hook(HookCmd),
+    /// Serve the owner's page on 127.0.0.1 (this machine only).
+    Serve {
+        /// The port; 0 picks a free one, and the address served is printed.
+        #[arg(long, default_value_t = server::PORT)]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]
@@ -173,7 +179,26 @@ fn run(cmd: Cmd) -> Result<(), String> {
             Ok(())
         }
         Cmd::History { item, json } => history(&item, json),
+        Cmd::Serve { port } => serve(port),
     }
+}
+
+fn serve(port: u16) -> Result<(), String> {
+    let store = open()?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("runtime: {e}"))?;
+    runtime.block_on(async move {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .map_err(|e| format!("127.0.0.1:{port}: {e}"))?;
+        let addr = listener.local_addr().map_err(|e| e.to_string())?;
+        eprintln!("focus-board serve: http://{addr}");
+        server::serve(listener, store)
+            .await
+            .map_err(|e| e.to_string())
+    })
 }
 
 fn open() -> Result<Store, String> {
@@ -201,10 +226,6 @@ fn parse_item(s: &str) -> Result<ItemId, String> {
         .map_err(|_| format!("{s:?} is not an item id such as B12"))
 }
 
-fn short(id: &str) -> String {
-    id.chars().take(8).collect()
-}
-
 fn folder(path: &str) -> &str {
     Path::new(path)
         .file_name()
@@ -213,27 +234,11 @@ fn folder(path: &str) -> &str {
 }
 
 fn label(writers: &[Writer], id: i64) -> String {
-    let Some(w) = writers.iter().find(|w| w.id == id) else {
-        return format!("writer {id}");
-    };
-    if w.kind == "owner" {
-        return "owner".into();
-    }
-    let base = if w.agent_id.is_empty() {
-        format!("session {}", short(&w.session_id))
-    } else {
-        let kind = if w.agent_type.is_empty() {
-            "agent"
-        } else {
-            &w.agent_type
-        };
-        format!("{kind} {} in {}", short(&w.agent_id), short(&w.session_id))
-    };
-    if w.name.is_empty() {
-        base
-    } else {
-        format!("{} ({base})", w.name)
-    }
+    writers
+        .iter()
+        .find(|w| w.id == id)
+        .map(Writer::label)
+        .unwrap_or_else(|| format!("writer {id}"))
 }
 
 fn shown(value: &Value) -> String {

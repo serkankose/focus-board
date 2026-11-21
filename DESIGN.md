@@ -49,7 +49,8 @@ All writes go through one function in the store, used by both the command and th
 
 **Status** (owner, 2026-11-21): two status cells, the author's and the owner's. The item shows the
 one written last, by row id. Writing the owner's answer also writes the owner's status as
-`answered`, in the same transaction. Each writer still writes only its own cells.
+`answered`, in the same transaction. Each writer still writes only its own cells. Any answer
+write sets `answered`, even on a closed item: editing an answer reopens it (owner, 2026-11-21).
 
 ## The write rules
 
@@ -121,7 +122,11 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 - **Every write** also needs a matching `Origin` and the header `X-Focus-Board: 1`, which a
   cross-site form cannot send.
 - Routes: `GET /` (the page), `GET /api/items`, `GET /api/tree`, `GET /api/timeline`,
-  `GET /api/history`, `GET /api/changes?after=N`, `POST /api/answer`.
+  `GET /api/history?item=N`, `GET /api/changes?after=N`, `POST /api/answer`, `POST /api/status`.
+  The reads take `project`, `workspace`, `writer` (a tree node) and `status`. The two writes are
+  the owner's only: no route writes a session's cell. A refused request is logged to stderr,
+  which the systemd unit keeps.
+- A stale write gets `409` with the current version; a value that does not fit gets `400`.
 - **Live updates.** The command writes past the server, so the change feed reads the database: the
   page asks `/api/changes?after=<last row id>` every 2 s and refetches when it has moved.
 - The page has three parts:
@@ -133,7 +138,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
     A node's timeline holds every write on the items raised in that branch, the owner's answers
     included, plus the branch's own writes on other items.
 
-## Tests — the brief's nine, and two more
+## Tests — the brief's nine, and the ones added while building
 
 | Brief's test | Test |
 |---|---|
@@ -145,13 +150,16 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A new session writes at once, no setup | `first_write_creates_writer` |
 | A fork shows under its parent; timeline interleaves | `fork_in_tree_and_timeline_order` |
 | Every version survives many edits | `all_versions_kept` (1000 edits) and `update_and_delete_refused` (triggers) |
-| Foreign `Origin`, foreign `Host`, or no header: refused | `server_guards` (writes and reads) |
+| Foreign `Origin`, foreign `Host`, or no header: refused | `server_guards` (writes and reads, raw requests over TCP, DNS rebinding included) |
 | *(added)* No identity, no write | `unidentified_write_refused` (identity), `unidentified_command_write_refused` (the binary, with only `CLAUDE_CODE_SESSION_ID` set) |
 | *(added)* The hook rewrites only `focus-board` commands, never fails, and the rewrite writes as the hook's agent | `hook_rewrites_only_board_calls` (binary, end to end through bash), `runs_board_finds_the_command_word_only` (unit) |
 | *(added)* The command end to end | `command_round_trip` |
 | *(added)* Values fit their field | `values_are_checked` |
 | *(added)* Status: the last written of the author's and the owner's | `status_is_the_last_written_of_author_and_owner` |
 | *(added)* The owner never writes from the command, a session never from the page | `writer_and_client_must_match` (unit test in `src/store.rs`) |
+| *(added)* The page's answer and status, the version check, no route for a session's cell | `page_answers_and_reads` |
+| *(added)* The page sees writes made past the server: change feed, tree, branch timeline | `page_sees_writes_made_past_it` |
+| *(added)* `focus-board serve` binds 127.0.0.1 only and serves the page | `serve_binds_loopback_only` |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

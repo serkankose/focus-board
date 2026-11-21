@@ -6,6 +6,7 @@
 
 pub mod hook;
 pub mod identity;
+pub mod server;
 pub mod store;
 
 use std::path::PathBuf;

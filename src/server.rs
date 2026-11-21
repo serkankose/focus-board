@@ -1,0 +1,338 @@
+//! The page's server: the owner's way onto the board, on 127.0.0.1 only.
+//!
+//! The owner writes only here, and only two things: the answer and the owner's status. There is
+//! no route that writes a session's cell. The command writes to the database past this server,
+//! so the change feed reads the database, never an in-server event.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use axum::extract::{Query, Request, State};
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde_json::{Value, json};
+use tokio::net::TcpListener;
+
+use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer};
+
+/// The board's port (owner, 2026-11-21).
+pub const PORT: u16 = 8810;
+/// The header every write must carry. A cross-site form cannot send a custom header.
+pub const WRITE_HEADER: &str = "x-focus-board";
+
+const PAGE: &str = include_str!("page.html");
+
+#[derive(Clone)]
+struct App {
+    store: Arc<Mutex<Store>>,
+    /// The only `Host` values accepted: this machine's loopback names with the bound port.
+    hosts: Arc<[String; 2]>,
+}
+
+/// Serves the board on `listener` until the process ends. The caller binds the listener, to
+/// 127.0.0.1 only.
+pub async fn serve(listener: TcpListener, store: Store) -> std::io::Result<()> {
+    let port = listener.local_addr()?.port();
+    let app = App {
+        store: Arc::new(Mutex::new(store)),
+        hosts: Arc::new([format!("127.0.0.1:{port}"), format!("localhost:{port}")]),
+    };
+    axum::serve(listener, router(app)).await
+}
+
+fn router(app: App) -> Router {
+    Router::new()
+        .route("/", get(|| async { Html(PAGE) }))
+        .route("/api/items", get(items))
+        .route("/api/tree", get(tree))
+        .route("/api/timeline", get(timeline))
+        .route("/api/history", get(history))
+        .route("/api/changes", get(changes))
+        .route("/api/answer", post(answer))
+        .route("/api/status", post(status))
+        .layer(middleware::from_fn_with_state(app.clone(), guard))
+        .with_state(app)
+}
+
+async fn guard(State(app): State<App>, req: Request, next: Next) -> Response {
+    match check(&app.hosts[..], req.method(), req.headers()) {
+        Ok(()) => next.run(req).await,
+        Err(why) => {
+            eprintln!(
+                "focus-board serve: refused {} {}: {why}",
+                req.method(),
+                req.uri().path()
+            );
+            (StatusCode::FORBIDDEN, Json(json!({ "error": why }))).into_response()
+        }
+    }
+}
+
+/// The brief's rule 4. Every request, reads included, must name this machine's board in
+/// `Host`; a DNS-rebinding page sends its own name there. Every write must also carry the same
+/// origin and the custom header, which a cross-site form cannot.
+fn check(hosts: &[String], method: &Method, headers: &HeaderMap) -> Result<(), &'static str> {
+    let text = |name| headers.get(name).and_then(|v| v.to_str().ok());
+    let host = text(header::HOST).ok_or("no Host")?;
+    if !hosts.iter().any(|h| h == host) {
+        return Err("the Host is not this machine's board");
+    }
+    if method == Method::GET || method == Method::HEAD {
+        return Ok(());
+    }
+    let origin = text(header::ORIGIN).ok_or("a write needs an Origin")?;
+    if origin != format!("http://{host}") {
+        return Err("the Origin does not match the board");
+    }
+    if text(header::HeaderName::from_static(WRITE_HEADER)) != Some("1") {
+        return Err("a write needs the X-Focus-Board header");
+    }
+    Ok(())
+}
+
+struct ApiError(StatusCode, Value);
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (self.0, Json(self.1)).into_response()
+    }
+}
+
+impl From<WriteError> for ApiError {
+    fn from(e: WriteError) -> Self {
+        let code = match &e {
+            WriteError::Stale { .. } => StatusCode::CONFLICT,
+            WriteError::NotYours(_) => StatusCode::FORBIDDEN,
+            WriteError::BadValue(_) => StatusCode::BAD_REQUEST,
+            WriteError::NoSuchItem(_) => StatusCode::NOT_FOUND,
+            WriteError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let mut body = json!({ "error": e.to_string() });
+        if let WriteError::Stale { current } = e {
+            body["current"] = json!(current);
+        }
+        ApiError(code, body)
+    }
+}
+
+impl From<rusqlite::Error> for ApiError {
+    fn from(e: rusqlite::Error) -> Self {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": e.to_string() }),
+        )
+    }
+}
+
+fn bad(why: &str) -> ApiError {
+    ApiError(StatusCode::BAD_REQUEST, json!({ "error": why }))
+}
+
+type ApiResult = Result<Json<Value>, ApiError>;
+
+/// Runs `f` on the board off the async threads: a write elsewhere can hold SQLite's lock for a
+/// moment, and the wait must not stall the server.
+async fn on_store<T: Send + 'static>(
+    app: &App,
+    f: impl FnOnce(&mut Store) -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    let store = app.store.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut store = store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        f(&mut store)
+    })
+    .await
+    .map_err(|e| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": e.to_string() }),
+        )
+    })?
+}
+
+fn number(q: &HashMap<String, String>, key: &str) -> Result<Option<i64>, ApiError> {
+    match q.get(key).filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(v) => v
+            .trim_start_matches(['B', 'b'])
+            .parse()
+            .map(Some)
+            .map_err(|_| bad("not a number")),
+    }
+}
+
+fn filter(q: &HashMap<String, String>) -> Result<Filter, ApiError> {
+    let text = |key: &str| q.get(key).filter(|v| !v.is_empty()).cloned();
+    Ok(Filter {
+        project: text("project"),
+        workspace: text("workspace"),
+        writer: number(q, "writer")?,
+        status: text("status"),
+    })
+}
+
+fn cell_json(c: &Cell) -> Value {
+    json!({
+        "seq": c.seq,
+        "item": c.item,
+        "writer": c.writer,
+        "field": c.field,
+        "version": c.version,
+        "value": c.value,
+        "client": c.client,
+        "written_at": c.written_at,
+    })
+}
+
+/// Items matching the filter, each with the current version of every cell.
+async fn items(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+    let filter = filter(&q)?;
+    on_store(&app, move |store| {
+        let mut out = Vec::new();
+        for i in store.items(&filter)? {
+            let cells: Vec<Value> = store.current(i.id)?.iter().map(cell_json).collect();
+            out.push(json!({
+                "id": i.id,
+                "label": i.label,
+                "parent": i.parent,
+                "author": i.author,
+                "question": i.question,
+                "status": i.status,
+                "cells": cells,
+            }));
+        }
+        Ok(Json(json!({ "last": store.last_seq()?, "items": out })))
+    })
+    .await
+}
+
+/// Every writer, with its label, its parent and when it last wrote.
+async fn tree(State(app): State<App>) -> ApiResult {
+    on_store(&app, |store| {
+        let last: HashMap<i64, (i64, String)> = store
+            .last_writes()?
+            .into_iter()
+            .map(|(w, seq, at)| (w, (seq, at)))
+            .collect();
+        let writers: Vec<Value> = store
+            .writers()?
+            .iter()
+            .map(|w: &Writer| {
+                let (last_seq, last_at) = last.get(&w.id).cloned().unzip();
+                json!({
+                    "id": w.id,
+                    "kind": w.kind,
+                    "label": w.label(),
+                    "session_id": w.session_id,
+                    "agent_id": w.agent_id,
+                    "agent_type": w.agent_type,
+                    "parent": w.parent,
+                    "project": w.project,
+                    "workspace": w.workspace,
+                    "name": w.name,
+                    "last_seq": last_seq,
+                    "last_at": last_at,
+                })
+            })
+            .collect();
+        Ok(Json(
+            json!({ "last": store.last_seq()?, "writers": writers }),
+        ))
+    })
+    .await
+}
+
+/// Every write after `after`, in the order written, narrowed by place and node.
+async fn timeline(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+    let filter = filter(&q)?;
+    let after = number(&q, "after")?.unwrap_or(0);
+    on_store(&app, move |store| {
+        let entries: Vec<Value> = store
+            .timeline(&filter, after)?
+            .iter()
+            .map(cell_json)
+            .collect();
+        Ok(Json(
+            json!({ "last": store.last_seq()?, "entries": entries }),
+        ))
+    })
+    .await
+}
+
+/// Every version of every cell of one item.
+async fn history(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+    let item: ItemId = number(&q, "item")?.ok_or(bad("which item?"))?;
+    on_store(&app, move |store| {
+        let cells = store.history(item)?;
+        if cells.is_empty() {
+            return Err(ApiError(
+                StatusCode::NOT_FOUND,
+                json!({ "error": format!("no item B{item}") }),
+            ));
+        }
+        Ok(Json(
+            json!({ "cells": cells.iter().map(cell_json).collect::<Vec<_>>() }),
+        ))
+    })
+    .await
+}
+
+/// The change feed: the board's last row, so the page refetches only when it has moved.
+async fn changes(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
+    let after = number(&q, "after")?.unwrap_or(0);
+    on_store(&app, move |store| {
+        let last = store.last_seq()?;
+        Ok(Json(json!({ "last": last, "changed": last > after })))
+    })
+    .await
+}
+
+fn item_and_expect(body: &Value) -> Result<(ItemId, Option<i64>), ApiError> {
+    let item = body
+        .get("item")
+        .and_then(Value::as_i64)
+        .ok_or(bad("\"item\" is a number"))?;
+    let expect = match body.get("expect") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_i64().ok_or(bad("\"expect\" is a version number"))?),
+    };
+    Ok((item, expect))
+}
+
+/// The owner's answer: `{"item": 3, "answer": {"pick": "a", "text": "…"}, "expect": 1}`.
+async fn answer(State(app): State<App>, Json(body): Json<Value>) -> ApiResult {
+    let (item, expect) = item_and_expect(&body)?;
+    let answer = body
+        .get("answer")
+        .cloned()
+        .ok_or(bad("\"answer\" is missing"))?;
+    on_store(&app, move |store| {
+        let version = store.owner_answer(item, &answer, expect)?;
+        Ok(Json(
+            json!({ "version": version, "last": store.last_seq()? }),
+        ))
+    })
+    .await
+}
+
+/// The owner's status: `{"item": 3, "status": "closed", "expect": 1}`.
+async fn status(State(app): State<App>, Json(body): Json<Value>) -> ApiResult {
+    let (item, expect) = item_and_expect(&body)?;
+    let status = body
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or(bad("\"status\" is text"))?
+        .to_string();
+    on_store(&app, move |store| {
+        let version = store.owner_status(item, &status, expect)?;
+        Ok(Json(
+            json!({ "version": version, "last": store.last_seq()? }),
+        ))
+    })
+    .await
+}

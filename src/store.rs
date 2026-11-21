@@ -203,6 +203,36 @@ pub struct Writer {
     pub name: String,
 }
 
+impl Writer {
+    /// How the command and the page name a writer: `owner`, `session 5d1da7e2`,
+    /// `fork ab073b5d in 5d1da7e2`, with the writer's name in front when it has one.
+    pub fn label(&self) -> String {
+        if self.kind == "owner" {
+            return "owner".into();
+        }
+        let short = |id: &str| id.chars().take(8).collect::<String>();
+        let base = if self.agent_id.is_empty() {
+            format!("session {}", short(&self.session_id))
+        } else {
+            let kind = if self.agent_type.is_empty() {
+                "agent"
+            } else {
+                &self.agent_type
+            };
+            format!(
+                "{kind} {} in {}",
+                short(&self.agent_id),
+                short(&self.session_id)
+            )
+        };
+        if self.name.is_empty() {
+            base
+        } else {
+            format!("{} ({base})", self.name)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemSummary {
     pub id: ItemId,
@@ -467,6 +497,16 @@ impl Store {
              ORDER BY c.id",
             params![after, filter.project, filter.workspace, filter.writer],
         )
+    }
+
+    /// When each writer last wrote: `(writer, row, time)` of its newest cell.
+    pub fn last_writes(&self) -> Result<Vec<(WriterId, i64, String)>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT writer, id, written_at FROM cells
+             WHERE id IN (SELECT MAX(id) FROM cells GROUP BY writer) ORDER BY writer",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect()
     }
 
     /// The board's clock now: the last row written, 0 for an empty board.

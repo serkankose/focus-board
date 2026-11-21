@@ -23,9 +23,10 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 
 ## Status (2026-11-21)
 
-- Build steps 2 and 3 of `DESIGN.md` are done: the store (`src/store.rs`), identity and place
-  (`src/identity.rs`), the hook (`src/hook.rs`) and the command (`src/main.rs`), with their tests
-  (`tests/store.rs`, `tests/command.rs`). No server or page yet.
+- Build steps 2 to 4 of `DESIGN.md` are done: the store (`src/store.rs`), identity and place
+  (`src/identity.rs`), the hook (`src/hook.rs`), the command (`src/main.rs`) and the server
+  (`src/server.rs`, `focus-board serve`), with their tests (`tests/store.rs`, `tests/command.rs`,
+  `tests/server.rs`). The page (`src/page.html`) is a placeholder until step 5.
 - The command is installed with `cargo install --path . --locked` (on `PATH` from
   `~/.cargo/bin`). The hook runs that installed copy from this project's gitignored
   `.claude/settings.local.json`, never the build in `target/`, which every build and test run
@@ -72,4 +73,6 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - **The board's data lives outside the source tree**, for example under the XDG data directory or
   a path set by an environment variable. The same goes for generated files.
 - Read before editing. Run it, or it isn't done. A fix ships with the test that would have caught it.
-  Commit only when asked, on a branch.
+- **Commits** (owner, 2026-11-21): commit each build step on its own branch, without asking, once
+  its tests and its break-it checks (each rule's test fails with the rule removed) are green.
+  Ask before merging anything into `master`, which takes the branches by squash or cherry-pick.
