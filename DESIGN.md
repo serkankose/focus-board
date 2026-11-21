@@ -29,6 +29,11 @@ All writes go through one function in the store, used by both the command and th
 - **`items`**: one row per item.
   - Fields: board id, parent item (for sub-items), the writer that raised it, and the session's
     own number kept as a label (`#9906`).
+  - **Where it was raised, as it was then** (owner, 2026-11-21: "to make good decisions in the item
+    listing I should be able to see the context"): the repository (main checkout), the checkout
+    (worktree) and its branch, taken from the raising command's working directory. The writer's
+    own place stays where it first wrote. The page shows repo, worktree, branch and full path on
+    each item; `list` and `show` print them.
   - Board ids are shown as `B12`, so they never look like a session's `#12`.
 - **`cells`**: every version of every cell, never changed.
   - Fields: row id, item, writer (who owns the cell), field, version, value, client (`page` or
@@ -172,8 +177,10 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(review R6)* A shared folder name does not mix projects | `a_shared_folder_name_does_not_mix_projects` |
 | *(review R8)* The timeline is cut and says so; active items on the server | `timeline_is_cut_and_says_so`, `timeline_cut_and_active_filter` |
 | *(review R10, R11, G8)* Repeated letters, a newer layout, the author-only question | `a_repeated_option_letter_is_refused`, `a_newer_layout_is_refused`, `only_the_author_writes_the_question` |
-| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 11 checks in headless Firefox |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 34 checks |
+| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 12 checks in headless Firefox |
+| *(owner's ask)* Each item keeps where it was raised: repo, worktree, branch, path | `item_context_is_recorded_at_raise_time`, the branch asserts in `projects_and_worktrees_stay_apart`, and the page check "each item shows its repo, worktree, branch and full path" |
+| A board from before layout versions is refused | `an_unversioned_board_is_refused` |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 37 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

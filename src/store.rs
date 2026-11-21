@@ -38,10 +38,14 @@ INSERT INTO writers (id, kind, session_id, project, workspace, created_at)
     SELECT 1, 'owner', '', '', '', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE NOT EXISTS (SELECT 1 FROM writers WHERE id = 1);
 CREATE TABLE IF NOT EXISTS items (
-    id      INTEGER PRIMARY KEY,
-    parent  INTEGER REFERENCES items(id),
-    author  INTEGER NOT NULL REFERENCES writers(id),
-    label   TEXT NOT NULL DEFAULT ''
+    id         INTEGER PRIMARY KEY,
+    parent     INTEGER REFERENCES items(id),
+    author     INTEGER NOT NULL REFERENCES writers(id),
+    label      TEXT NOT NULL DEFAULT '',
+    -- Where the item was raised, as it was then: the repository, the checkout, its branch.
+    project    TEXT NOT NULL DEFAULT '',
+    workspace  TEXT NOT NULL DEFAULT '',
+    branch     TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS cells (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,6 +112,8 @@ pub enum OpenError {
     Db(rusqlite::Error),
     /// The board's layout is newer than this program knows.
     NewerLayout(i64),
+    /// The board has tables but no layout version: it was made by a draft from before versions.
+    Unversioned,
 }
 
 impl fmt::Display for OpenError {
@@ -118,6 +124,11 @@ impl fmt::Display for OpenError {
                 f,
                 "the board's layout is version {v}, and this focus-board knows only up to \
                  version {LAYOUT}: update focus-board"
+            ),
+            OpenError::Unversioned => write!(
+                f,
+                "the board was made by a focus-board from before layout versions; start a new \
+                 board (the old one is kept as it is)"
             ),
         }
     }
@@ -286,6 +297,11 @@ pub struct ItemSummary {
     pub question: String,
     /// The author's or the owner's status, whichever was written last.
     pub status: String,
+    /// Where it was raised, as it was then: the repository (main checkout), the checkout, and
+    /// the checkout's branch (empty outside git).
+    pub project: String,
+    pub workspace: String,
+    pub branch: String,
 }
 
 /// Narrows a listing or the timeline. Every field set must match.
@@ -310,6 +326,14 @@ impl Store {
         let layout: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if layout > LAYOUT {
             return Err(OpenError::NewerLayout(layout));
+        }
+        let has_items: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items')",
+            [],
+            |r| r.get(0),
+        )?;
+        if layout == 0 && has_items {
+            return Err(OpenError::Unversioned);
         }
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0))?;
         // In WAL mode NORMAL keeps every commit safe from a crash of the program; only a power
@@ -347,8 +371,16 @@ impl Store {
             item_author(&tx, parent)?;
         }
         tx.execute(
-            "INSERT INTO items (parent, author, label) VALUES (?1, ?2, ?3)",
-            params![new.parent, author, new.label],
+            "INSERT INTO items (parent, author, label, project, workspace, branch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                new.parent,
+                author,
+                new.label,
+                place.project,
+                place.workspace,
+                place.branch
+            ],
         )?;
         let item = tx.last_insert_rowid();
         write_in(
@@ -603,7 +635,8 @@ impl Store {
                 (SELECT value FROM cells WHERE item = i.id AND field = 'question'
                     ORDER BY id DESC LIMIT 1),
                 (SELECT value FROM cells WHERE item = i.id AND field = 'status'
-                    AND writer IN (i.author, ?4) ORDER BY id DESC LIMIT 1)
+                    AND writer IN (i.author, ?4) ORDER BY id DESC LIMIT 1),
+                i.project, i.workspace, i.branch
              FROM items i JOIN writers a ON a.id = i.author
              WHERE (?1 IS NULL OR a.project = ?1)
                AND (?2 IS NULL OR a.workspace = ?2)
@@ -622,6 +655,9 @@ impl Store {
                     author: r.get(3)?,
                     question: json_str(question),
                     status: json_str(status),
+                    project: r.get(6)?,
+                    workspace: r.get(7)?,
+                    branch: r.get(8)?,
                 })
             },
         )?;
@@ -924,6 +960,7 @@ mod tests {
         let place = Place {
             project: "p".into(),
             workspace: "p".into(),
+            branch: String::new(),
         };
         let who = Identity {
             session_id: "s".into(),

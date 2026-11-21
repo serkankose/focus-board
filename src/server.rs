@@ -225,6 +225,9 @@ async fn items(State(app): State<App>, Query(q): Query<HashMap<String, String>>)
                 "author": i.author,
                 "question": i.question,
                 "status": i.status,
+                "project": i.project,
+                "workspace": i.workspace,
+                "branch": i.branch,
                 "cells": cells,
             }));
         }

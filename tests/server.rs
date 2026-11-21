@@ -96,7 +96,8 @@ fn session(id: &str) -> Identity {
 fn here() -> Place {
     Place {
         project: "/p".into(),
-        workspace: "/p".into(),
+        workspace: "/p-wt".into(),
+        branch: "feature".into(),
     }
 }
 
@@ -311,6 +312,12 @@ fn page_answers_and_reads() {
 
     let (_, items) = board.get("/api/items");
     assert_eq!(items["items"][0]["status"], "answered");
+    let item = &items["items"][0];
+    assert_eq!(
+        (&item["project"], &item["workspace"], &item["branch"]),
+        (&json!("/p"), &json!("/p-wt"), &json!("feature")),
+        "the page gets where the item was raised"
+    );
     let (code, _) = board.post("/api/status", json!({ "item": 1, "status": "closed" }));
     assert_eq!(code, 200);
     let (_, items) = board.get("/api/items?status=closed");

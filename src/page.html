@@ -53,6 +53,9 @@ td.id { white-space: nowrap; }
 .feedback { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .feedback li { border-left: 3px solid var(--line); padding-left: 6px; }
 .who { font-size: 12px; color: var(--muted); }
+.ctx { font-size: 12px; margin-top: 4px; color: var(--muted); }
+.ctx .v { color: var(--fg); font-weight: 600; }
+.ctx .path { font-family: ui-monospace, monospace; overflow-wrap: anywhere; color: var(--fg); }
 h2 { font-size: 14px; margin: 20px 0 6px; }
 #timeline { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); }
 #timeline li { padding: 4px 8px; border-bottom: 1px solid var(--line); }
@@ -308,7 +311,6 @@ function historyLink(item, writerId, field, text) {
 }
 
 function itemRow(item, depth) {
-  const author = writer(item.author);
   const options = (cell(item, item.author, "options") || {}).value || {};
   const recommended = (cell(item, item.author, "recommended") || {}).value;
   const feedback = item.cells.filter((c) => c.field === "feedback");
@@ -321,13 +323,25 @@ function itemRow(item, depth) {
       el("div", { class: "question" }, item.question),
       Object.keys(options).length ? el("ul", { class: "options" }, Object.entries(options).map(([k, v]) =>
         el("li", {}, k + ") " + v, k === recommended ? el("span", { class: "rec" }, "  recommended") : null))) : null,
-      el("div", { class: "who" }, "raised by " + label(item.author) + (author ? " · " + place(author) : ""))),
+      el("div", { class: "who" }, "raised by " + label(item.author)),
+      contextOf(item)),
     el("td", {}, statusCell(item)),
     el("td", {}, answerEditor(item, options)),
     el("td", {}, feedback.length ? el("ul", { class: "feedback" }, feedback.map((c) => el("li", {},
       el("div", {}, shown(c.value)),
       el("div", { class: "who" }, label(c.writer) + " · ", el("time", { title: c.written_at }, clock(c.written_at)),
         " · ", historyLink(item, c.writer, "feedback", "v" + c.version))))) : el("span", { class: "muted" }, "none yet")));
+}
+
+// Where the item was raised, as it was then: repository, worktree, branch, and the full path.
+function contextOf(item) {
+  const worktree = item.workspace && item.workspace !== item.project;
+  return el("div", { class: "ctx" },
+    el("span", { class: "k" }, "repo "), el("span", { class: "v" }, folder(item.project)),
+    worktree ? [el("span", { class: "k" }, " · worktree "), el("span", { class: "v" }, folder(item.workspace))] : null,
+    item.branch ? [el("span", { class: "k" }, " · branch "), el("span", { class: "v" }, item.branch)]
+      : el("span", { class: "k" }, " · not in git"),
+    el("div", { class: "path", title: "the checkout it was raised in" }, item.workspace));
 }
 
 function statusCell(item) {

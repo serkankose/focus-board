@@ -129,9 +129,16 @@ try:
     entries = m.js("return document.querySelectorAll('#timeline li').length")
     check("the timeline renders", entries > 0, f"{entries} entries")
     text = m.js("return document.querySelector('#items').innerText")
-    tags = m.js("return document.querySelectorAll('#items b').length")
-    check("board text stays text", "<b>not bold</b>" in text and tags == len(rows),
-          f"literal tag shown: {'<b>not bold</b>' in text}; <b> elements {tags} for {len(rows)} rows")
+    parsed = m.js("return [...document.querySelectorAll('#items b')].some(b => b.textContent === 'not bold')")
+    check("board text stays text", "<b>not bold</b>" in text and not parsed,
+          f"literal tag shown: {'<b>not bold</b>' in text}; parsed as markup: {parsed}")
+    ctx = m.js("""return Object.fromEntries([...document.querySelectorAll('#items tr')].map(r =>
+        [r.cells[0].innerText.split('\\n')[0], r.querySelector('.ctx') ? r.querySelector('.ctx').innerText : '']))""")
+    check("each item shows its repo, worktree, branch and full path",
+          "branch main" in ctx.get("B1", "") and "/alpha" in ctx.get("B1", "")
+          and "worktree alpha-feature" in ctx.get("B4", "") and "branch feature" in ctx.get("B4", "")
+          and "/alpha-feature" in ctx.get("B4", "") and "not in git" in ctx.get("B3", ""),
+          json.dumps(ctx))
     m.shot(os.path.join(out, "page-1-loaded.png"))
 
     # The owner answers B1 through the page: a real browser POST.
@@ -168,8 +175,9 @@ try:
     m.shot(os.path.join(out, "page-2-answered-and-refused.png"))
 
     labels = m.js("return [...document.querySelectorAll('nav button.node')].map(b => b.innerText.split(' ·')[0])")
-    check("a project whose only workspace is itself has no workspace level",
-          labels.count("alpha") == 1 and labels.count("beta") == 1, " | ".join(labels))
+    check("a project with one workspace has no workspace level; one with two has it",
+          labels.count("beta") == 1 and labels.count("alpha") == 2 and "alpha-feature" in labels,
+          " | ".join(labels))
 
     # A tree node narrows the table, even when it is picked while a refresh is running.
     try:

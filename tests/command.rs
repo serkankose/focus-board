@@ -301,6 +301,17 @@ fn command_round_trip() {
 
     let item = board.json(&["show", "B1", "--json"]);
     assert_eq!(item["label"], "#15");
+    // Raised in a folder outside git: the context says so, with the full path.
+    assert_eq!(item["branch"], "");
+    assert!(
+        item["workspace"].as_str().unwrap().ends_with("/work"),
+        "{item}"
+    );
+    let shown = board.ok(None, &["show", "B1"]);
+    assert!(
+        shown.contains("in         work · not in git") && shown.contains("path       /"),
+        "{shown}"
+    );
     assert_eq!(item["recommended"], "a");
     assert_eq!(item["options"]["b"], "no");
     let feedback: Vec<(String, Value)> = item["cells"]

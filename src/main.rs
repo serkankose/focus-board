@@ -293,7 +293,6 @@ fn whoami(name: Option<String>) -> Result<(), String> {
 }
 
 fn item_json(i: &ItemSummary, writers: &[Writer]) -> Value {
-    let author = writers.iter().find(|w| w.id == i.author);
     json!({
         "id": format!("B{}", i.id),
         "label": i.label,
@@ -301,9 +300,25 @@ fn item_json(i: &ItemSummary, writers: &[Writer]) -> Value {
         "question": i.question,
         "parent": i.parent.map(|p| format!("B{p}")),
         "author": label(writers, i.author),
-        "project": author.map(|w| w.project.clone()),
-        "workspace": author.map(|w| w.workspace.clone()),
+        "project": i.project,
+        "workspace": i.workspace,
+        "branch": i.branch,
     })
+}
+
+/// Where an item was raised, in one line: the repository, the worktree when it is not the main
+/// checkout, and the branch then.
+fn context(i: &ItemSummary) -> String {
+    let mut out = folder(&i.project).to_string();
+    if i.workspace != i.project {
+        out.push_str(&format!(" · worktree {}", folder(&i.workspace)));
+    }
+    if i.branch.is_empty() {
+        out.push_str(" · not in git");
+    } else {
+        out.push_str(&format!(" · {}", i.branch));
+    }
+    out
 }
 
 /// The one project whose path is `name`, or whose folder is called `name`. Two projects can share
@@ -382,7 +397,7 @@ fn list(
             i.status,
             i.question,
             label(&writers, i.author),
-            folder(&project_of(i))
+            context(i)
         );
     }
     Ok(())
@@ -448,6 +463,8 @@ fn show(item: &str, as_json: bool) -> Result<(), String> {
         }
     }
     println!("raised by  {}", label(&writers, summary.author));
+    println!("in         {}", context(&summary));
+    println!("path       {}", summary.workspace);
     if let Some(p) = summary.parent {
         println!("follows    B{p}");
     }

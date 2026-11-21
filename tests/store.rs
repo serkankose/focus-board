@@ -35,6 +35,7 @@ fn place(project: &str, workspace: &str) -> Place {
     Place {
         project: project.into(),
         workspace: workspace.into(),
+        branch: String::new(),
     }
 }
 
@@ -590,6 +591,16 @@ fn projects_and_worktrees_stay_apart() {
     );
     assert_ne!(p_wt.workspace, p_alpha.workspace);
     assert_ne!(p_beta.project, p_alpha.project);
+    // Each checkout knows its branch: `git worktree add` names the new branch after the folder.
+    assert_eq!(
+        (
+            p_alpha.branch.as_str(),
+            p_wt.branch.as_str(),
+            p_loose.branch.as_str()
+        ),
+        ("master", "alpha-wt", ""),
+        "branches of the main checkout, the worktree, and a folder with no repository"
+    );
     let home_shown = home.canonicalize().unwrap().to_string_lossy().into_owned();
     assert_ne!(
         p_loose.project, home_shown,
@@ -779,4 +790,73 @@ fn timeline_cut_and_active_filter() {
     };
     let ids: Vec<i64> = store.items(&active).unwrap().iter().map(|i| i.id).collect();
     assert_eq!(ids, vec![item]);
+}
+
+/// The owner's ask (2026-11-21): to decide on an item, see where it was raised. Each item keeps
+/// the repository, checkout and branch of the command that raised it, as they were then, even
+/// when its writer first wrote somewhere else.
+#[test]
+fn item_context_is_recorded_at_raise_time() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let me = session("s");
+    let main = Place {
+        project: "/repo".into(),
+        workspace: "/repo".into(),
+        branch: "master".into(),
+    };
+    let worktree = Place {
+        project: "/repo".into(),
+        workspace: "/repo/.claude/worktrees/fix".into(),
+        branch: "fix-it".into(),
+    };
+    let first = store
+        .add_item(&me, &main, &question("raised on master"))
+        .unwrap();
+    let second = store
+        .add_item(&me, &worktree, &question("raised in the worktree"))
+        .unwrap();
+    let items = store.items(&Filter::default()).unwrap();
+    let context = |id| {
+        let i = items.iter().find(|i| i.id == id).unwrap();
+        (i.project.clone(), i.workspace.clone(), i.branch.clone())
+    };
+    assert_eq!(
+        context(first),
+        ("/repo".into(), "/repo".into(), "master".into())
+    );
+    assert_eq!(
+        context(second),
+        (
+            "/repo".into(),
+            "/repo/.claude/worktrees/fix".into(),
+            "fix-it".into()
+        )
+    );
+    let writer = store
+        .writers()
+        .unwrap()
+        .into_iter()
+        .find(|w| w.session_id == "s")
+        .unwrap();
+    assert_eq!(
+        writer.workspace, "/repo",
+        "the writer stays where it first wrote"
+    );
+}
+
+/// A board made before layout versions has tables but `user_version` 0; it is refused, not
+/// read with a layout it does not have.
+#[test]
+fn an_unversioned_board_is_refused() {
+    let (_dir, db) = board();
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY, author INTEGER, label TEXT);")
+        .unwrap();
+    drop(raw);
+    match Store::open(&db) {
+        Err(OpenError::Unversioned) => {}
+        Err(other) => panic!("wrong refusal: {other}"),
+        Ok(_) => panic!("an unversioned board was opened"),
+    }
 }

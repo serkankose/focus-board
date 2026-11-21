@@ -17,6 +17,14 @@ as() { # as SESSION AGENT AGENT_TYPE -- focus-board arguments...
 }
 
 mkdir -p "$dir/alpha" "$dir/beta"
+# alpha is a git repository on branch main, with a worktree on branch feature; beta is no repo.
+g() {
+    git -C "$1" -c user.name=demo -c user.email=demo@example.invalid -c init.defaultBranch=main \
+        "${@:2}" >/dev/null 2>&1
+}
+g "$dir/alpha" init -q && g "$dir/alpha" commit -q --allow-empty -m demo &&
+    g "$dir/alpha" worktree add -q -b feature "$dir/alpha-feature" ||
+    { echo "git setup failed"; exit 1; }
 cd "$dir/alpha" || exit 1
 as demo-session-a "" "" add "Keep SQLite, or store the board another way?" \
     -o a="keep SQLite" -o b="PostgreSQL" -o c="append-only files" --recommend a --label "#15"
@@ -27,3 +35,6 @@ as demo-session-a "" "" add "Which port?" -o a=8810 -o b="pick later" --recommen
 cd "$dir/beta" || exit 1
 as demo-session-b "" "" add "Ship the page today?" -o a=yes -o b=no --label "#3"
 as demo-session-b "" "" feedback B3 "Waiting on the browser check."
+cd "$dir/alpha-feature" || exit 1
+as demo-session-c "" "" add "Merge the feature branch now?" \
+    -o a="merge" -o b="wait for the review" --recommend b --label "#21"

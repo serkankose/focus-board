@@ -27,7 +27,7 @@ tests that prove it. Read it before designing anything. Don't copy it here.
   (`src/identity.rs`), the hook (`src/hook.rs`), the command (`src/main.rs`) and the server
   (`src/server.rs`, `focus-board serve`), with their tests (`tests/store.rs`, `tests/command.rs`,
   `tests/server.rs`). Step 5, the page (`src/page.html`), runs in a real browser:
-  `checks/page-check.sh` drives a headless Firefox through it (11 checks).
+  `checks/page-check.sh` drives a headless Firefox through it (12 checks).
 - The first review (`~/temp/focus-board/`, 2026-11-21) is answered on branch `review-1`. Step 6,
   installing, is next.
 - The command is installed with `cargo install --path . --locked` (on `PATH` from

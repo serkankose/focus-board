@@ -84,5 +84,10 @@ check "closed counts as active"      store.rs store timeline_cut_and_active_filt
 check "cells may be deleted"         store.rs store update_and_delete_refused 's/cells are never deleted\x27\); END;/cells are never deleted\x27) WHERE 0; END;/'
 check "status set by a non-author"   store.rs command command_round_trip 's/Field::Status if !is_owner && writer != author =>/Field::Status if false =>/'
 
+# Added with the item context (owner, 2026-11-21).
+check "item context not recorded"    store.rs store item_context_is_recorded_at_raise_time 's/place\.branch\n(\s*)\]/""\n$1]/'
+check "branch not detected"          identity.rs store projects_and_worktrees_stay_apart 's/branch: branch_of\(&dir\),/branch: String::new(),/'
+check "unversioned board opened"     store.rs store an_unversioned_board_is_refused 's/if layout == 0 && has_items \{/if false && layout == 0 && has_items {/'
+
 cp -r .pristine/src/. src/
 exit $status

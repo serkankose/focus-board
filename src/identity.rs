@@ -88,6 +88,8 @@ pub fn is_plain_id(s: &str) -> bool {
 pub struct Place {
     pub project: String,
     pub workspace: String,
+    /// The checkout's branch at that moment, `detached at <commit>`, or empty outside git.
+    pub branch: String,
 }
 
 impl Place {
@@ -115,14 +117,26 @@ impl Place {
                 Place {
                     project: shown(&project),
                     workspace: shown(&top),
+                    branch: branch_of(&dir),
                 }
             }
             _ => Place {
                 project: shown(&dir),
                 workspace: shown(&dir),
+                branch: String::new(),
             },
         }
     }
+}
+
+/// The checkout's branch (an unborn one too), `detached at <commit>`, or empty when unknown.
+fn branch_of(dir: &Path) -> String {
+    if let Some(branch) = git(dir, &["symbolic-ref", "--short", "-q", "HEAD"]) {
+        return branch;
+    }
+    git(dir, &["rev-parse", "--short", "HEAD"])
+        .map(|commit| format!("detached at {commit}"))
+        .unwrap_or_default()
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
