@@ -101,12 +101,17 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
 | Command | Does |
 |---|---|
 | `focus-board whoami [--name N]` | shows (or names) this writer |
-| `focus-board list [--project P] [--status S] [--json]` | open items, filtered |
-| `focus-board show B12` | one item: all cells, current versions |
-| `focus-board add "question" --option a="…" --option b="…" [--recommend a] [--label "#9906"] [--parent B3]` | raises an item |
-| `focus-board feedback B12 "text" [--pick b] [--expect V]` | writes this session's feedback |
-| `focus-board history B12` | every version of every cell |
+| `focus-board list [--project P \| --everywhere] [--status S \| --all] [--json]` | by default this project's items that are not closed |
+| `focus-board show B12 [--json]` | one item: all cells, current versions |
+| `focus-board add "question" -o a="…" -o b="…" [--recommend a] [--label "#9906"] [--parent B3]` | raises an item |
+| `focus-board feedback B12 ["text"] [--pick b] [--expect V]` | writes this session's feedback |
+| `focus-board status B12 open\|closed [--expect V]` | the author's status of its own item |
+| `focus-board history B12 [--json]` | every version of every cell |
 | `focus-board answer …` | always refused: "the owner answers on the page" |
+| `focus-board hook pre-tool-use` | the hook itself: reads the hook's JSON on stdin, never fails |
+
+Reads need no identity. Every write needs the hook's `FOCUS_BOARD_SESSION`, and refuses before
+opening the board without it. A refusal exits 1 with the reason on stderr.
 
 ## The server and the page
 
@@ -134,15 +139,16 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
 |---|---|
 | Two writers, different columns, same row, same moment: both survive | `concurrent_writers_both_land` (two connections, two threads, barrier-started) |
 | A stale version is refused; the cell keeps the newer value | `stale_version_refused` |
-| The command refuses the owner's column | `cli_refuses_answer` (step 3, runs the binary); the store's guard: `session_cannot_write_the_owners_column` |
+| The command refuses the owner's column | `cli_refuses_answer` (runs the binary); the store's guard: `session_cannot_write_the_owners_column` |
 | A fork and its parent each keep their own cell | `fork_and_parent_own_cells` |
 | Two projects, two workspaces of one: never mix | `projects_and_worktrees_stay_apart`, also covering the home-folder case |
 | A new session writes at once, no setup | `first_write_creates_writer` |
 | A fork shows under its parent; timeline interleaves | `fork_in_tree_and_timeline_order` |
 | Every version survives many edits | `all_versions_kept` (1000 edits) and `update_and_delete_refused` (triggers) |
 | Foreign `Origin`, foreign `Host`, or no header: refused | `server_guards` (writes and reads) |
-| *(added)* No identity, no write | `unidentified_write_refused`, also with only `CLAUDE_CODE_SESSION_ID` set (the command's own refusal: step 3) |
-| *(added)* The hook rewrites only `focus-board` commands | `hook_rewrites_only_board_calls` (step 3) |
+| *(added)* No identity, no write | `unidentified_write_refused` (identity), `unidentified_command_write_refused` (the binary, with only `CLAUDE_CODE_SESSION_ID` set) |
+| *(added)* The hook rewrites only `focus-board` commands, never fails, and the rewrite writes as the hook's agent | `hook_rewrites_only_board_calls` (binary, end to end through bash), `runs_board_finds_the_command_word_only` (unit) |
+| *(added)* The command end to end | `command_round_trip` |
 | *(added)* Values fit their field | `values_are_checked` |
 | *(added)* Status: the last written of the author's and the owner's | `status_is_the_last_written_of_author_and_owner` |
 | *(added)* The owner never writes from the command, a session never from the page | `writer_and_client_must_match` (unit test in `src/store.rs`) |
@@ -168,6 +174,9 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
 5. The page: table, tree, timeline, cell history.
 6. Install: `cargo install`, the hook in the global settings, and a systemd user unit for
    `focus-board serve` that starts at login and restarts after a crash (owner, 2026-11-21).
+   Before calling it done, run one board command from a session that is not in auto mode: the
+   rewritten command starts with `export …;`, so an allow rule such as `Bash(focus-board:*)` may
+   stop matching and every board call may prompt.
 
 ## Open, the owner's call
 
