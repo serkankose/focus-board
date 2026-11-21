@@ -26,7 +26,8 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - Build steps 2 to 4 of `DESIGN.md` are done: the store (`src/store.rs`), identity and place
   (`src/identity.rs`), the hook (`src/hook.rs`), the command (`src/main.rs`) and the server
   (`src/server.rs`, `focus-board serve`), with their tests (`tests/store.rs`, `tests/command.rs`,
-  `tests/server.rs`). The page (`src/page.html`) is a placeholder until step 5.
+  `tests/server.rs`). Step 5, the page (`src/page.html`), is a first draft: its script parses
+  (`node --check`), but it has not been run in a browser yet.
 - The command is installed with `cargo install --path . --locked` (on `PATH` from
   `~/.cargo/bin`). The hook runs that installed copy from this project's gitignored
   `.claude/settings.local.json`, never the build in `target/`, which every build and test run

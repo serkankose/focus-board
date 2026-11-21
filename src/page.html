@@ -4,8 +4,424 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>focus-board</title>
+<style>
+:root {
+  --bg: #f7f7f8; --card: #ffffff; --fg: #1d1d1f; --muted: #6b6b73; --line: #dddde2;
+  --accent: #2457c5; --chip: #eef1f8; --warn: #b3261e; --open: #8a5a00; --answered: #1b6e36;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141416; --card: #1c1c20; --fg: #e8e8ea; --muted: #9a9aa3; --line: #34343b;
+    --accent: #84a8ff; --chip: #262a36; --warn: #ff8a80; --open: #f0c060; --answered: #7bd88f;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px 16px;
+  align-items: center; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 16px; }
+select, input[type=text], button { font: inherit; color: inherit; }
+select, input[type=text] { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+button { background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button.link { background: none; border: none; padding: 0; color: var(--accent); }
+.muted { color: var(--muted); }
+#live.down { color: var(--warn); }
+main { display: grid; grid-template-columns: 270px minmax(0, 1fr); min-height: calc(100vh - 48px); }
+nav { border-right: 1px solid var(--line); padding: 10px 8px; overflow: auto; }
+nav ul { list-style: none; margin: 0; padding-left: 14px; }
+nav > ul { padding-left: 0; }
+nav button.node { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent;
+  padding: 2px 6px; margin: 1px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+nav button.node.selected { background: var(--chip); border-color: var(--line); }
+section { padding: 12px 16px; min-width: 0; }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
+th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+td.id { white-space: nowrap; }
+.sub td.id { padding-left: 24px; }
+.question { font-weight: 600; }
+.options { margin: 4px 0 0; padding-left: 0; list-style: none; }
+.rec { color: var(--answered); font-size: 12px; }
+.chip { display: inline-block; padding: 0 8px; border-radius: 10px; background: var(--chip); font-size: 12px; }
+.st-open { color: var(--open); } .st-answered { color: var(--answered); } .st-closed { color: var(--muted); }
+.answer { display: grid; gap: 4px; min-width: 200px; }
+.answer .picks { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.answer .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.answer input[type=text] { width: 100%; }
+.msg { color: var(--warn); font-size: 12px; }
+.feedback { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.feedback li { border-left: 3px solid var(--line); padding-left: 6px; }
+.who { font-size: 12px; color: var(--muted); }
+h2 { font-size: 14px; margin: 20px 0 6px; }
+#timeline { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); }
+#timeline li { padding: 4px 8px; border-bottom: 1px solid var(--line); }
+time { font-variant-numeric: tabular-nums; color: var(--muted); }
+dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; max-width: 640px; }
+dialog ol { padding-left: 18px; }
+@media (max-width: 860px) {
+  main { grid-template-columns: 1fr; }
+  nav { border-right: none; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  table, thead, tbody, tr, td { display: block; }
+  thead { display: none; }
+  tr { border-bottom: 2px solid var(--line); }
+  td { border-bottom: none; }
+}
+</style>
 </head>
 <body>
-<p>focus-board: the page arrives in build step 5. The API is live under <code>/api/</code>.</p>
+<header>
+  <h1>focus-board</h1>
+  <label>Project <select id="project"><option value="">all projects</option></select></label>
+  <label>Status
+    <select id="status">
+      <option value="active">not closed</option>
+      <option value="open">open</option>
+      <option value="answered">answered</option>
+      <option value="closed">closed</option>
+      <option value="all">all</option>
+    </select>
+  </label>
+  <span id="scope" class="muted"></span>
+  <span id="live" class="muted">connecting…</span>
+</header>
+<main>
+  <nav aria-label="Projects, workspaces and sessions"><ul id="tree"></ul></nav>
+  <section>
+    <table>
+      <thead><tr><th>Item</th><th>Question</th><th>Status</th><th>Your answer</th><th>Feedback</th></tr></thead>
+      <tbody id="items"></tbody>
+    </table>
+    <p id="empty" class="muted" hidden>No items here.</p>
+    <h2>Timeline <span class="muted">· newest first</span></h2>
+    <ol id="timeline"></ol>
+  </section>
+</main>
+<dialog id="history">
+  <h3 id="history-title"></h3>
+  <ol id="history-list"></ol>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+<script>
+"use strict";
+// Every piece of board text is put on the page as text, never parsed as HTML: sessions write it.
+
+const POLL_MS = 2000;
+const TIMELINE_MAX = 300;
+const state = { last: 0, writers: new Map(), owner: null, items: [], node: null, drafts: new Map(), busy: false };
+const $ = (id) => document.getElementById(id);
+
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === false || v == null) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "value") e.value = v;
+    else if (k === "checked") e.checked = !!v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c != null && c !== false) e.append(c instanceof Node ? c : String(c));
+  return e;
+}
+
+async function getJSON(path) {
+  const r = await fetch(path, { cache: "no-store" });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+  return body;
+}
+
+// Writes carry the custom header the server requires; the browser adds Origin itself.
+async function postJSON(path, data) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Focus-Board": "1" },
+    body: JSON.stringify(data),
+  });
+  return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
+}
+
+const folder = (path) => (path || "").split("/").filter(Boolean).pop() || path || "";
+function clock(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? time : d.toLocaleDateString() + " " + time;
+}
+function shown(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && ("pick" in v || "text" in v)) return [v.pick, v.text].filter(Boolean).join(": ");
+  return JSON.stringify(v);
+}
+const writer = (id) => state.writers.get(id);
+const label = (id) => (writer(id) ? writer(id).label : "writer " + id);
+const place = (w) => (w && w.kind === "session" ? folder(w.project) + (w.workspace !== w.project ? " / " + folder(w.workspace) : "") : "");
+const cell = (item, writerId, field) => item.cells.find((c) => c.writer === writerId && c.field === field);
+
+function query() {
+  const p = new URLSearchParams();
+  const n = state.node;
+  if (n) p.set(n.kind, n.value);
+  return p.toString();
+}
+
+async function refresh() {
+  if (state.busy) return;
+  state.busy = true;
+  try {
+    const q = query();
+    const [tree, items, timeline] = await Promise.all([
+      getJSON("/api/tree"), getJSON("/api/items?" + q), getJSON("/api/timeline?" + q),
+    ]);
+    state.writers = new Map(tree.writers.map((w) => [w.id, w]));
+    state.owner = tree.writers.find((w) => w.kind === "owner")?.id ?? null;
+    state.items = items.items;
+    // The smallest of the three: a write that landed between the fetches is fetched next poll.
+    state.last = Math.min(tree.last, items.last, timeline.last);
+    renderProjects();
+    renderTree();
+    keepFocus(renderItems);
+    renderTimeline(timeline.entries);
+    setLive(null);
+  } catch (e) {
+    setLive(e.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function poll() {
+  try {
+    const c = await getJSON("/api/changes?after=" + state.last);
+    setLive(null);
+    if (c.changed) await refresh();
+  } catch (e) {
+    setLive(e.message);
+  }
+}
+
+function setLive(error) {
+  const live = $("live");
+  live.className = error ? "down" : "muted";
+  live.textContent = error ? "not connected: " + error : "live · " + clock(new Date().toISOString());
+}
+
+// Re-rendering must not take the cursor away from an answer being typed.
+function keepFocus(render) {
+  const a = document.activeElement;
+  const key = a && a.dataset ? a.dataset.key : null;
+  const caret = key && "selectionStart" in a ? [a.selectionStart, a.selectionEnd] : null;
+  render();
+  if (!key) return;
+  const again = document.querySelector('[data-key="' + CSS.escape(key) + '"]');
+  if (again) {
+    again.focus();
+    if (caret && again.setSelectionRange) again.setSelectionRange(caret[0], caret[1]);
+  }
+}
+
+function select(kind, value) {
+  state.node = kind ? { kind, value } : null;
+  let project = "";
+  if (kind === "project") project = value;
+  if (kind === "workspace") project = [...state.writers.values()].find((w) => w.workspace === value)?.project || "";
+  if (kind === "writer") project = writer(Number(value))?.project || "";
+  $("project").value = project;
+  refresh();
+}
+
+function renderProjects() {
+  const sel = $("project");
+  const chosen = state.node && state.node.kind === "project" ? state.node.value : sel.value;
+  const projects = [...new Set([...state.writers.values()].filter((w) => w.kind === "session").map((w) => w.project))].sort();
+  sel.replaceChildren(el("option", { value: "" }, "all projects"), ...projects.map((p) => el("option", { value: p, title: p }, folder(p))));
+  sel.value = projects.includes(chosen) ? chosen : "";
+  const n = state.node;
+  $("scope").textContent = !n ? "whole board"
+    : n.kind === "writer" ? label(Number(n.value))
+    : n.kind + " " + folder(n.value);
+}
+
+function renderTree() {
+  const sessions = [...state.writers.values()].filter((w) => w.kind === "session");
+  const selected = (kind, value) => state.node && state.node.kind === kind && String(state.node.value) === String(value);
+  const node = (kind, value, text, title, extra, children) => el("li", {},
+    el("button", { class: "node" + (selected(kind, value) ? " selected" : ""), title, onclick: () => select(kind, value) },
+      text, extra ? el("span", { class: "muted" }, " · " + extra) : null),
+    children && children.length ? el("ul", {}, children) : null);
+  const group = (list, key) => {
+    const m = new Map();
+    for (const x of list) m.set(key(x), [...(m.get(key(x)) || []), x]);
+    return [...m].sort((a, b) => a[0].localeCompare(b[0]));
+  };
+  const agentsOf = (s) => sessions.filter((a) => a.parent === s.id);
+  const sessionNode = (s) => node("writer", s.id, s.label, s.session_id, clock(s.last_at),
+    agentsOf(s).map((a) => node("writer", a.id, a.label.replace(/ in \S+$/, ""), a.agent_id, clock(a.last_at))));
+  const tops = sessions.filter((s) => !s.agent_id);
+  const projects = group(tops, (s) => s.project).map(([project, list]) => node("project", project, folder(project), project, null,
+    group(list, (s) => s.workspace).map(([ws, ss]) => node("workspace", ws, folder(ws), ws, null, ss.map(sessionNode)))));
+  $("tree").replaceChildren(
+    el("li", {}, el("button", { class: "node" + (state.node ? "" : " selected"), onclick: () => select(null) }, "whole board")),
+    ...projects);
+}
+
+function statusShown(item) {
+  const filter = $("status").value;
+  return filter === "all" || (filter === "active" ? item.status !== "closed" : item.status === filter);
+}
+
+function renderItems() {
+  const items = state.items.filter(statusShown);
+  const ids = new Set(items.map((i) => i.id));
+  const children = new Map();
+  for (const i of items) {
+    const parent = ids.has(i.parent) ? i.parent : null;
+    children.set(parent, [...(children.get(parent) || []), i]);
+  }
+  const rows = [];
+  const walk = (parent, depth) => {
+    for (const i of children.get(parent) || []) {
+      rows.push(itemRow(i, depth));
+      walk(i.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  $("items").replaceChildren(...rows);
+  $("empty").hidden = rows.length > 0;
+}
+
+function historyLink(item, writerId, field, text) {
+  return el("button", { class: "link", title: "every version", onclick: () => showHistory(item.id, writerId, field) }, text);
+}
+
+function itemRow(item, depth) {
+  const author = writer(item.author);
+  const options = (cell(item, item.author, "options") || {}).value || {};
+  const recommended = (cell(item, item.author, "recommended") || {}).value;
+  const feedback = item.cells.filter((c) => c.field === "feedback");
+  return el("tr", { class: depth ? "sub" : "" },
+    el("td", { class: "id", style: depth ? "padding-left:" + (8 + depth * 16) + "px" : null },
+      el("b", {}, "B" + item.id),
+      item.label ? el("div", { class: "muted" }, item.label) : null,
+      item.parent ? el("div", { class: "muted" }, "follows B" + item.parent) : null),
+    el("td", {},
+      el("div", { class: "question" }, item.question),
+      Object.keys(options).length ? el("ul", { class: "options" }, Object.entries(options).map(([k, v]) =>
+        el("li", {}, k + ") " + v, k === recommended ? el("span", { class: "rec" }, "  recommended") : null))) : null,
+      el("div", { class: "who" }, "raised by " + label(item.author) + (author ? " · " + place(author) : ""))),
+    el("td", {}, statusCell(item)),
+    el("td", {}, answerEditor(item, options)),
+    el("td", {}, feedback.length ? el("ul", { class: "feedback" }, feedback.map((c) => el("li", {},
+      el("div", {}, shown(c.value)),
+      el("div", { class: "who" }, label(c.writer) + " · ", el("time", { title: c.written_at }, clock(c.written_at)),
+        " · ", historyLink(item, c.writer, "feedback", "v" + c.version))))) : el("span", { class: "muted" }, "none yet")));
+}
+
+function statusCell(item) {
+  const mine = state.owner == null ? null : cell(item, state.owner, "status");
+  const next = item.status === "closed" ? "open" : "closed";
+  const msg = el("div", { class: "msg" });
+  return el("div", {},
+    el("span", { class: "chip st-" + item.status }, item.status),
+    el("div", { style: "margin-top:6px" },
+      el("button", { onclick: async () => {
+        const r = await postJSON("/api/status", { item: item.id, status: next, expect: mine ? mine.version : 0 });
+        if (r.ok) refresh(); else msg.textContent = refusal(r);
+      } }, next === "closed" ? "Close" : "Reopen")),
+    msg);
+}
+
+function refusal(r) {
+  if (r.status === 409) return "Refused: it changed elsewhere (now v" + r.body.current + "). Look again, then save.";
+  return "Refused: " + (r.body.error || "HTTP " + r.status);
+}
+
+function answerEditor(item, options) {
+  const saved = state.owner == null ? null : cell(item, state.owner, "answer");
+  const version = saved ? saved.version : 0;
+  const value = saved ? saved.value : {};
+  const draft = state.drafts.get(item.id);
+  const shownValue = draft || { pick: value.pick || "", text: value.text || "", base: version };
+  const msg = el("div", { class: "msg" }, draft && draft.error ? draft.error : "");
+  if (draft && draft.base !== version) msg.textContent = "Your answer changed elsewhere since you started. Discard to see it.";
+  const save = el("button", { disabled: !draft }, "Save");
+  const discard = el("button", { class: "link", hidden: !draft, onclick: () => { state.drafts.delete(item.id); keepFocus(renderItems); } }, "discard");
+  const edit = (change) => {
+    const d = state.drafts.get(item.id) || { pick: value.pick || "", text: value.text || "", base: version };
+    Object.assign(d, change, { error: "" });
+    state.drafts.set(item.id, d);
+    save.disabled = false;
+    discard.hidden = false;
+  };
+  save.addEventListener("click", async () => {
+    const d = state.drafts.get(item.id);
+    if (!d) return;
+    const answer = {};
+    if (d.pick) answer.pick = d.pick;
+    if (d.text.trim()) answer.text = d.text.trim();
+    if (!answer.pick && !answer.text) { msg.textContent = "Pick an option or write an answer."; return; }
+    save.disabled = true;
+    const r = await postJSON("/api/answer", { item: item.id, answer, expect: d.base });
+    if (r.ok) { state.drafts.delete(item.id); refresh(); }
+    else { d.error = refusal(r); msg.textContent = d.error; save.disabled = false; }
+  });
+  const name = "pick-" + item.id;
+  const picks = Object.keys(options).map((k) => el("label", { title: options[k] },
+    el("input", { type: "radio", name, value: k, checked: shownValue.pick === k, "data-key": name + "-" + k, onchange: () => edit({ pick: k }) }), " " + k));
+  if (picks.length) picks.push(el("label", {}, el("input", { type: "radio", name, value: "", checked: !shownValue.pick, "data-key": name + "-none", onchange: () => edit({ pick: "" }) }), " none"));
+  return el("div", { class: "answer" },
+    picks.length ? el("div", { class: "picks" }, picks) : null,
+    el("input", { type: "text", value: shownValue.text, placeholder: "your answer", "data-key": "text-" + item.id,
+      oninput: (e) => edit({ text: e.target.value }),
+      onkeydown: (e) => { if (e.key === "Enter") save.click(); } }),
+    el("div", { class: "row" }, save, discard,
+      saved ? el("span", { class: "who" }, el("time", { title: saved.written_at }, clock(saved.written_at)), " · ",
+        historyLink(item, state.owner, "answer", "v" + version)) : null),
+    msg);
+}
+
+function describe(e) {
+  if (e.field === "question" && e.version === 1) return "opened";
+  if (e.field === "answer") return "answered: " + shown(e.value);
+  if (e.field === "status") return "set status " + shown(e.value);
+  if (e.field === "feedback") return "feedback: " + shown(e.value);
+  return "set " + e.field + (e.field === "question" ? ": " + shown(e.value) : "");
+}
+
+function renderTimeline(entries) {
+  const recent = entries.slice(-TIMELINE_MAX).reverse();
+  $("timeline").replaceChildren(...recent.map((e) => {
+    const w = writer(e.writer);
+    return el("li", {},
+      el("time", { title: e.written_at }, clock(e.written_at)), " ",
+      el("b", {}, label(e.writer)), " ",
+      historyLink({ id: e.item }, e.writer, e.field, "B" + e.item), " ",
+      describe(e),
+      w && w.kind === "session" ? el("span", { class: "muted" }, " · " + place(w)) : null);
+  }));
+  if (!recent.length) $("timeline").replaceChildren(el("li", { class: "muted" }, "nothing written here yet"));
+}
+
+async function showHistory(itemId, writerId, field) {
+  try {
+    const h = await getJSON("/api/history?item=" + itemId);
+    const versions = h.cells.filter((c) => c.writer === writerId && c.field === field).reverse();
+    $("history-title").textContent = "B" + itemId + " · " + label(writerId) + " · " + field;
+    $("history-list").replaceChildren(...versions.map((c) => el("li", {},
+      "v" + c.version + "  ", el("time", { title: c.written_at }, clock(c.written_at)), "  ", shown(c.value),
+      el("span", { class: "muted" }, "  (" + c.client + ")"))));
+    $("history").showModal();
+  } catch (e) {
+    setLive(e.message);
+  }
+}
+
+$("project").addEventListener("change", (e) => select(e.target.value ? "project" : null, e.target.value));
+$("status").addEventListener("change", () => keepFocus(renderItems));
+refresh();
+setInterval(poll, POLL_MS);
+</script>
 </body>
 </html>
