@@ -95,6 +95,7 @@ check "node filter one level"        store.rs store a_copied_session_files_under
 check "parent is the chain's root"   identity.rs store fork_parent_reads_the_transcript 's/last_request\.or\(forked_from\)/forked_from.or(last_request)/'
 check "command skips the lookup"     main.rs command a_copied_session_writes_under_its_parent 's/who\.parent_session = parent;/let _ = parent;/'
 check "transcript hand-set allowed"  hook.rs command hook_denies_a_hand_set_identity 's/\[SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR, TRANSCRIPT_VAR\]/[SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR]/'
+check "item filed at its writer's place" store.rs store an_item_is_filed_where_it_was_raised 's/AND \(\?3 IS NULL OR i\.workspace = \?3\)/AND (?3 IS NULL OR a.workspace = ?3)/; s/AND \(\?2 IS NULL OR i\.workspace = \?2\)/AND (?2 IS NULL OR a.workspace = ?2)/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
 cp -r .pristine/src/. src/

@@ -33,7 +33,8 @@ All writes go through one function in the store, used by both the command and th
     listing I should be able to see the context"): the repository (main checkout), the checkout
     (worktree) and its branch, taken from the raising command's working directory. The writer's
     own place stays where it first wrote. The page shows repo, worktree, branch and full path on
-    each item; `list` and `show` print them.
+    each item; `list` and `show` print them. The project and workspace filters use the item's own
+    place too, so an item is filed where it shows it was raised (review X1).
   - Board ids are shown as `B12`, so they never look like a session's `#12`.
 - **`cells`**: every version of every cell, never changed.
   - Fields: row id, item, writer (who owns the cell), field, version, value, client (`page` or
@@ -194,7 +195,8 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* Each item keeps where it was raised: repo, worktree, branch, path | `item_context_is_recorded_at_raise_time`, the branch asserts in `projects_and_worktrees_stay_apart`, and the page check "each item shows its repo, worktree, branch and full path" |
 | A board from before layout versions is refused | `an_unversioned_board_is_refused` |
 | *(review R3)* A copied session finds its parent and sits under it | `fork_parent_reads_the_transcript`, `a_copied_session_files_under_its_parent`, `a_copied_session_writes_under_its_parent` (the binary, through the hook), and the page check "a copied session sits under the session it was copied from" |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 43 checks |
+| *(review X1)* An item is filed where it was raised | `an_item_is_filed_where_it_was_raised` |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 44 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next
@@ -222,6 +224,23 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
    stop matching and every board call may prompt. The unit sends the server's stderr (startup and
    refused requests) to `%S/focus-board/serve.log`, which is `~/.local/state/focus-board/`, the
    log folder the owner chose (review R5).
+
+## Platforms
+
+**Linux, Windows and macOS: the code now, the installs later** (owner, 2026-11-21: "#122/a", sent
+right after "#122/b"; the later one stands). Review 04 listed what a port touches.
+- **To build next, tested with Windows-style paths on Linux:**
+  - P1: one data folder per OS;
+  - P2: the page splits paths on both separators;
+  - P3: `runs_board` takes `focus-board.exe` and `\`;
+  - P4: `list --project` takes `C:\…` as a path;
+  - P8: Windows `canonicalize` gives `\\?\` paths;
+  - P9: `is_safe_path` takes a drive path.
+- **Unverified until a run on that OS:**
+  - P5: the hook's POSIX `export` prefix (Claude Code's Bash tool on Windows runs Git Bash);
+  - P7: tests and checks need bash, git and Firefox.
+- **Waits for a machine to try:** P6, the install recipe per OS (launchd, a scheduled task). Step 6
+  is the Linux one.
 
 ## Open, the owner's call
 

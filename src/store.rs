@@ -103,8 +103,8 @@ pub const LAYOUT: i64 = 1;
 const TIMELINE_ROWS: &str = "FROM cells c JOIN items i ON i.id = c.item
      JOIN writers a ON a.id = i.author JOIN writers w ON w.id = c.writer
      WHERE c.id > ?1
-       AND (?2 IS NULL OR a.project = ?2)
-       AND (?3 IS NULL OR a.workspace = ?3)
+       AND (?2 IS NULL OR i.project = ?2)
+       AND (?3 IS NULL OR i.workspace = ?3)
        AND (?4 IS NULL OR a.id IN branch OR w.id IN branch)";
 
 /// A tree node's branch, at any depth: the writer `?4`, its agents and the sessions copied from
@@ -654,7 +654,8 @@ impl Store {
             .query_row("SELECT COALESCE(MAX(id), 0) FROM cells", [], |r| r.get(0))
     }
 
-    /// Items whose author matches the filter, oldest first.
+    /// Items matching the filter, oldest first. Project and workspace are the item's own, where
+    /// it was raised (review X1); the node is its author's branch.
     pub fn items(&self, filter: &Filter) -> Result<Vec<ItemSummary>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "WITH RECURSIVE branch(id) AS (
@@ -666,8 +667,8 @@ impl Store {
                     AND writer IN (i.author, ?4) ORDER BY id DESC LIMIT 1),
                 i.project, i.workspace, i.branch
              FROM items i JOIN writers a ON a.id = i.author
-             WHERE (?1 IS NULL OR a.project = ?1)
-               AND (?2 IS NULL OR a.workspace = ?2)
+             WHERE (?1 IS NULL OR i.project = ?1)
+               AND (?2 IS NULL OR i.workspace = ?2)
                AND (?3 IS NULL OR a.id IN branch)
              ORDER BY i.id",
         )?;

@@ -335,11 +335,10 @@ fn context(i: &ItemSummary) -> String {
 /// The one project whose path is `name`, or whose folder is called `name`. Two projects can share
 /// a folder name (`~/dev/x`, `~/temp/x`), and projects never mix, so such a name is refused with
 /// the paths to choose from (review R6).
-fn one_project_named(writers: &[Writer], name: &str) -> Result<String, String> {
-    let mut projects: Vec<&str> = writers
+fn one_project_named(items: &[ItemSummary], name: &str) -> Result<String, String> {
+    let mut projects: Vec<&str> = items
         .iter()
-        .filter(|w| w.kind == "session")
-        .map(|w| w.project.as_str())
+        .map(|i| i.project.as_str())
         .filter(|p| *p == name || folder(p) == name)
         .collect();
     projects.sort_unstable();
@@ -364,13 +363,6 @@ fn list(
 ) -> Result<(), String> {
     let store = open()?;
     let writers = store.writers().map_err(|e| e.to_string())?;
-    let project_of = |i: &ItemSummary| {
-        writers
-            .iter()
-            .find(|w| w.id == i.author)
-            .map(|w| w.project.clone())
-            .unwrap_or_default()
-    };
     let mut items = store.items(&Filter::default()).map_err(|e| e.to_string())?;
     if !everywhere {
         let wanted = match project {
@@ -378,10 +370,10 @@ fn list(
                 .canonicalize()
                 .map(|c| c.to_string_lossy().into_owned())
                 .unwrap_or(p),
-            Some(name) => one_project_named(&writers, &name)?,
+            Some(name) => one_project_named(&items, &name)?,
             None => here()?.project,
         };
-        items.retain(|i| project_of(i) == wanted);
+        items.retain(|i| i.project == wanted);
     }
     match status {
         Some(s) => items.retain(|i| i.status == s),

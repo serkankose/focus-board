@@ -1025,3 +1025,49 @@ fn a_copied_session_files_under_its_parent() {
     let copy2 = writers.iter().find(|w| w.session_id == "copy2").unwrap();
     assert_eq!(copy2.parent, Some(never));
 }
+
+/// Review X1: an item is filed where it shows it was raised. A writer that first wrote in
+/// worktree A raises an item in worktree B; the workspace filter finds it under B, not A, in the
+/// listing and in the timeline alike.
+#[test]
+fn an_item_is_filed_where_it_was_raised() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let me = session("s");
+    let a = Place {
+        project: "/repo".into(),
+        workspace: "/repo".into(),
+        branch: "master".into(),
+    };
+    let b = Place {
+        project: "/repo".into(),
+        workspace: "/repo-b".into(),
+        branch: "b".into(),
+    };
+    let first = store.add_item(&me, &a, &question("raised in A")).unwrap();
+    let second = store.add_item(&me, &b, &question("raised in B")).unwrap();
+    let in_ws = |ws: &str| Filter {
+        workspace: Some(ws.into()),
+        ..Filter::default()
+    };
+    let ids = |f: &Filter| {
+        store
+            .items(f)
+            .unwrap()
+            .iter()
+            .map(|i| i.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&in_ws("/repo")), vec![first]);
+    assert_eq!(ids(&in_ws("/repo-b")), vec![second]);
+    let items_in_b: Vec<i64> = store
+        .timeline(&in_ws("/repo-b"), 0, None)
+        .unwrap()
+        .iter()
+        .map(|c| c.item)
+        .collect();
+    assert!(
+        !items_in_b.is_empty() && items_in_b.iter().all(|&i| i == second),
+        "{items_in_b:?}"
+    );
+}
