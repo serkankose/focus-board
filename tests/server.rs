@@ -19,6 +19,11 @@ struct Board {
 impl Board {
     /// A fresh board with one item raised by session `s1`, and its server on a free port.
     fn start() -> Board {
+        Board::start_watching(None)
+    }
+
+    /// The same, with the rename watch on a transcript folder.
+    fn start_watching(projects: Option<PathBuf>) -> Board {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("board.sqlite");
         let item = NewItem {
@@ -43,7 +48,9 @@ impl Board {
                 .unwrap();
             runtime.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                focus_board::server::serve(listener, store).await.unwrap();
+                focus_board::server::serve(listener, store, projects)
+                    .await
+                    .unwrap();
             });
         });
         Board {
@@ -499,5 +506,67 @@ fn timeline_is_cut_and_says_so() {
         active["items"],
         json!([]),
         "a closed item left the active list"
+    );
+}
+
+/// The owner's ask (2026-11-21): "when a session is renamed the board should be updated". The
+/// server watches each session's transcript: a `/rename` shows on the tree within a few seconds,
+/// with no write by the session, and the change feed's rename count moves so the page refreshes.
+#[test]
+fn a_rename_reaches_the_board_without_a_write() {
+    let projects = tempfile::tempdir().unwrap();
+    let folder = projects.path().join("-home-me-dev-p");
+    std::fs::create_dir_all(&folder).unwrap();
+    let transcript = folder.join("s1.jsonl");
+    let title = |t: &str| {
+        format!(
+            "{}\n",
+            json!({ "type": "custom-title", "customTitle": t, "sessionId": "s1" })
+        )
+    };
+    std::fs::write(&transcript, title("Smith")).unwrap();
+    let board = Board::start_watching(Some(projects.path().to_path_buf()));
+
+    let label_of_s1 = |board: &Board| {
+        let (_, tree) = board.get("/api/tree");
+        tree["writers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["session_id"] == "s1")
+            .map(|w| w["label"].clone())
+            .unwrap_or(Value::Null)
+    };
+    let wait_for = |want: &str| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if label_of_s1(&board) == json!(want) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        false
+    };
+    assert!(
+        wait_for("Smith"),
+        "the first name was not read: {}",
+        label_of_s1(&board)
+    );
+    let (_, before) = board.get("/api/changes?after=0");
+
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&transcript)
+        .unwrap();
+    std::io::Write::write_all(&mut f, title("Smith - the genius coder").as_bytes()).unwrap();
+    assert!(
+        wait_for("Smith - the genius coder"),
+        "the rename was not followed: {}",
+        label_of_s1(&board)
+    );
+    let (_, after) = board.get("/api/changes?after=0");
+    assert!(
+        after["renames"].as_u64() > before["renames"].as_u64(),
+        "{before} -> {after}"
     );
 }

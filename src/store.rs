@@ -654,6 +654,29 @@ impl Store {
         rows.collect()
     }
 
+    /// Every session (not an agent) as `(session id, name on the board)`, for the rename watch.
+    pub fn session_names(&self) -> Result<Vec<(String, String)>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id, name FROM writers WHERE kind = 'session' AND agent_id = ''",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Gives a session its new name; `false` when it already had it or is unknown.
+    pub fn rename_session(
+        &mut self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<bool, rusqlite::Error> {
+        let changed = self.conn.execute(
+            "UPDATE writers SET name = ?1
+             WHERE kind = 'session' AND agent_id = '' AND session_id = ?2 AND name != ?1",
+            params![name, session_id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// The board's clock now: the last row written, 0 for an empty board.
     pub fn last_seq(&self) -> Result<i64, rusqlite::Error> {
         self.conn

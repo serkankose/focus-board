@@ -223,7 +223,7 @@ fn serve(port: u16) -> Result<(), String> {
             .map_err(|e| format!("127.0.0.1:{port}: {e}"))?;
         let addr = listener.local_addr().map_err(|e| e.to_string())?;
         eprintln!("focus-board serve: http://{addr}");
-        server::serve(listener, store)
+        server::serve(listener, store, focus_board::names::projects_dir())
             .await
             .map_err(|e| e.to_string())
     })

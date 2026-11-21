@@ -165,10 +165,38 @@ pub fn fork_parent(transcript: &Path, own: &str) -> Option<String> {
 /// last label (`agent-name` lines, `agentName`). `None` when the transcript has neither. It follows
 /// a rename, since the last line wins. Undocumented fields, seen on Claude Code 2.1.329.
 pub fn session_name(transcript: &Path) -> Option<String> {
-    use std::io::BufRead;
     let file = std::fs::File::open(transcript).ok()?;
+    scan_names(std::io::BufReader::new(file)).name()
+}
+
+/// The names a stretch of a transcript gives: its last `/rename` title and its last label.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Names {
+    pub title: Option<String>,
+    pub label: Option<String>,
+}
+
+impl Names {
+    /// The name to show: the title, else the label.
+    pub fn name(&self) -> Option<String> {
+        self.title.clone().or_else(|| self.label.clone())
+    }
+
+    /// These names followed by a later stretch's: a later title replaces the title, a later label
+    /// the label, so a label never hides a title given earlier.
+    pub fn then(self, later: Names) -> Names {
+        Names {
+            title: later.title.or(self.title),
+            label: later.label.or(self.label),
+        }
+    }
+}
+
+/// Reads the names in a stretch of transcript lines. Lines that are not UTF-8 or not JSON are
+/// skipped.
+pub fn scan_names(reader: impl std::io::BufRead) -> Names {
     let (mut title, mut label) = (None, None);
-    for bytes in std::io::BufReader::new(file).split(b'\n') {
+    for bytes in reader.split(b'\n') {
         let Ok(bytes) = bytes else { break };
         let line = String::from_utf8_lossy(&bytes);
         if !line.contains("\"custom-title\"") && !line.contains("\"agent-name\"") {
@@ -184,7 +212,7 @@ pub fn session_name(transcript: &Path) -> Option<String> {
             _ => {}
         }
     }
-    title.or(label)
+    Names { title, label }
 }
 
 /// A name as the board shows it: one line, no control characters, at most 80 characters.

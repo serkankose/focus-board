@@ -20,7 +20,7 @@ import sys
 import tempfile
 import time
 
-url, out = sys.argv[1], sys.argv[2]
+url, out = sys.argv[1], os.path.abspath(sys.argv[2])  # file:// links need an absolute path
 port = int(sys.argv[3]) if len(sys.argv) > 3 else 31828
 os.makedirs(out, exist_ok=True)
 profile = tempfile.mkdtemp(prefix="fb-firefox-")

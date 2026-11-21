@@ -5,7 +5,10 @@
 //! so the change feed reads the database, never an in-server event.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::extract::{Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
@@ -16,6 +19,7 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
+use crate::names::NameWatcher;
 use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer, label_in};
 
 /// The board's port (owner, 2026-11-21).
@@ -35,17 +39,68 @@ struct App {
     store: Arc<Mutex<Store>>,
     /// The only `Host` values accepted: this machine's loopback names with the bound port.
     hosts: Arc<[String; 2]>,
+    /// Counts the renames the watch made, so the page knows to refresh (`/api/changes`).
+    renames: Arc<AtomicU64>,
 }
+
+/// How often the server looks for renamed sessions.
+pub const RENAME_WATCH: Duration = Duration::from_secs(2);
 
 /// Serves the board on `listener` until the process ends. The caller binds the listener, to
 /// 127.0.0.1 only.
-pub async fn serve(listener: TcpListener, store: Store) -> std::io::Result<()> {
+/// `projects` is Claude Code's transcript folder; with it, the server follows sessions' renames.
+pub async fn serve(
+    listener: TcpListener,
+    store: Store,
+    projects: Option<PathBuf>,
+) -> std::io::Result<()> {
     let port = listener.local_addr()?.port();
     let app = App {
         store: Arc::new(Mutex::new(store)),
         hosts: Arc::new([format!("127.0.0.1:{port}"), format!("localhost:{port}")]),
+        renames: Arc::new(AtomicU64::new(0)),
     };
+    if let Some(projects) = projects {
+        tokio::spawn(watch_renames(app.clone(), NameWatcher::new(projects)));
+    }
     axum::serve(listener, router(app)).await
+}
+
+/// Every [`RENAME_WATCH`], gives each session the name in its transcript. The transcripts are
+/// read without holding the board, which is locked only to list sessions and to rename.
+async fn watch_renames(app: App, watcher: NameWatcher) {
+    let watcher = Arc::new(Mutex::new(watcher));
+    let mut tick = tokio::time::interval(RENAME_WATCH);
+    loop {
+        tick.tick().await;
+        let (app, watcher) = (app.clone(), watcher.clone());
+        let _ = tokio::task::spawn_blocking(move || {
+            let sessions = match app.store.lock() {
+                Ok(store) => match store.session_names() {
+                    Ok(sessions) => sessions,
+                    Err(_) => return,
+                },
+                Err(_) => return,
+            };
+            let changed = match watcher.lock() {
+                Ok(mut watcher) => watcher.changed(&sessions),
+                Err(_) => return,
+            };
+            if changed.is_empty() {
+                return;
+            }
+            if let Ok(mut store) = app.store.lock() {
+                let renamed = changed
+                    .iter()
+                    .filter(|(id, name)| store.rename_session(id, name).unwrap_or(false))
+                    .count();
+                if renamed > 0 {
+                    app.renames.fetch_add(renamed as u64, Ordering::Relaxed);
+                }
+            }
+        })
+        .await;
+    }
 }
 
 fn router(app: App) -> Router {
@@ -311,12 +366,18 @@ async fn history(State(app): State<App>, Query(q): Query<HashMap<String, String>
     .await
 }
 
-/// The change feed: the board's last row, so the page refetches only when it has moved.
+/// The change feed: the board's last row, so the page refetches only when it has moved, and the
+/// count of renames, which move no row.
 async fn changes(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
     let after = number(&q, "after")?.unwrap_or(0);
+    let renames = app.renames.load(Ordering::Relaxed);
     on_store(&app, move |store| {
         let last = store.last_seq()?;
-        Ok(Json(json!({ "last": last, "changed": last > after })))
+        Ok(Json(json!({
+            "last": last,
+            "changed": last > after,
+            "renames": renames,
+        })))
     })
     .await
 }

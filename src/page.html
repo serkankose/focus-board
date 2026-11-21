@@ -205,7 +205,11 @@ async function poll() {
   try {
     const c = await getJSON("/api/changes?after=" + state.last);
     setLive(null);
-    if (c.changed) await refresh();
+    // A rename moves no row, so the feed counts renames separately.
+    if (c.changed || c.renames !== state.renames) {
+      state.renames = c.renames;
+      await refresh();
+    }
   } catch (e) {
     setLive(e.message);
   }
