@@ -29,6 +29,17 @@ pub fn pre_tool_use(input: &str) -> Option<String> {
     }
     let tool_input = data.get("tool_input")?.as_object()?;
     let command = tool_input.get("command")?.as_str()?;
+    let prefix = prefix_for(&data);
+    // Its own rewrite, sent again: auto mode can lose its review of a call this hook rewrote and
+    // then asks for the rewritten command to be re-issued. When every value is exactly what this
+    // hook sets for this very call, and the rest sets nothing, it passes unchanged. Any other
+    // identity assignment is still denied (review of 2026-11-21).
+    if let Some(prefix) = &prefix
+        && let Some(rest) = command.strip_prefix(prefix.as_str())
+        && !sets_identity(rest)
+    {
+        return None;
+    }
     if sets_identity(command) {
         return Some(
             json!({
@@ -44,23 +55,7 @@ pub fn pre_tool_use(input: &str) -> Option<String> {
     if !runs_board(command) {
         return None;
     }
-    let text = |key: &str| data.get(key).and_then(Value::as_str).unwrap_or("");
-    let (session, agent, agent_type) = (text("session_id"), text("agent_id"), text("agent_type"));
-    if session.is_empty() || ![session, agent, agent_type].iter().all(|v| is_plain_id(v)) {
-        return None;
-    }
-    // Plain ids only (checked above), so single quotes cannot be broken out of; the transcript's
-    // path only when it is safe too. A copied session finds its parent there (see fork_parent).
-    let transcript = text("transcript_path");
-    let transcript = if is_safe_path(transcript) {
-        transcript
-    } else {
-        ""
-    };
-    let prefix = format!(
-        "export {SESSION_VAR}='{session}' {AGENT_VAR}='{agent}' {AGENT_TYPE_VAR}='{agent_type}' \
-         {TRANSCRIPT_VAR}='{transcript}'; "
-    );
+    let prefix = prefix?;
     let mut updated = tool_input.clone();
     updated.insert("command".into(), json!(format!("{prefix}{command}")));
     Some(
@@ -69,6 +64,27 @@ pub fn pre_tool_use(input: &str) -> Option<String> {
         })
         .to_string(),
     )
+}
+
+/// The exports this hook puts in front of a board command for this call, or `None` when the hook
+/// input has no usable session id. Plain ids only, so single quotes cannot be broken out of; the
+/// transcript's path only when it is safe too (a copied session finds its parent there).
+fn prefix_for(data: &Value) -> Option<String> {
+    let text = |key: &str| data.get(key).and_then(Value::as_str).unwrap_or("");
+    let (session, agent, agent_type) = (text("session_id"), text("agent_id"), text("agent_type"));
+    if session.is_empty() || ![session, agent, agent_type].iter().all(|v| is_plain_id(v)) {
+        return None;
+    }
+    let transcript = text("transcript_path");
+    let transcript = if is_safe_path(transcript) {
+        transcript
+    } else {
+        ""
+    };
+    Some(format!(
+        "export {SESSION_VAR}='{session}' {AGENT_VAR}='{agent}' {AGENT_TYPE_VAR}='{agent_type}' \
+         {TRANSCRIPT_VAR}='{transcript}'; "
+    ))
 }
 
 /// Whether a shell command runs `focus-board` (by name or by a path ending in it) as a command,

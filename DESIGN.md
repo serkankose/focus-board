@@ -97,6 +97,15 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   one (`permissionDecision: deny`); this only tightens. The refusal for a missing identity says to
   run `focus-board` as the first word, and never to set the variables. `runs_board` sees through
   `env`, `exec`, `command`, `time`, `nohup`, `nice`, `timeout N`, `!` and shell keywords.
+- **Auto mode and the rewrite** (a session's report, 2026-11-21).
+  - Auto mode can lose its review of a call this hook rewrote, seen on a piped
+    `focus-board list | head`. Calls sent in the same response can lose theirs too.
+  - It then asks for the rewritten command to be re-issued, and the identity guard used to deny
+    that, leaving the session stuck.
+  - Now the hook lets its own rewrite pass unchanged: every value must be exactly what it sets for
+    that very call, and nothing after it may set an identity. A subagent re-sending its parent's
+    rewrite, or one extra assignment, is still denied. The skill says to send board commands in a
+    response of their own.
 - **Parents.** An Agent-tool fork or subagent has its parent's session id and its own agent id, so
   its parent is that session's writer. Seen for a subagent; **unverified** for an Agent-tool fork
   (`subagent_type: fork`), which is expected to behave the same.
@@ -216,7 +225,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(review X1)* An item is filed where it was raised | `an_item_is_filed_where_it_was_raised` |
 | *(owner's ask)* Sessions have names, never hashes; they follow a rename | `session_names_read_from_the_transcript`, `made_up_names_are_fixed_and_never_hashes`, `a_session_name_follows_a_rename`, `a_session_shows_its_rename_title` (through the hook), and the page check "no session shows as a hash" |
 | *(owner's ask)* `wait` ends when the owner answers | `wait_ends_when_the_owner_answers`, `wait_returns_at_once_or_times_out` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 58 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 59 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

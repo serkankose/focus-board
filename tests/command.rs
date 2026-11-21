@@ -633,3 +633,54 @@ fn a_session_shows_its_rename_title() {
     let listed = board.ok(None, &["list"]);
     assert!(listed.contains("(Stormy ·"), "{listed}");
 }
+
+/// A reported deadlock (2026-11-21): auto mode can lose its review of a call this hook
+/// rewrote, and then asks for the rewritten command to be re-issued, which the identity guard
+/// denied. The hook now lets exactly its own rewrite for that very call pass unchanged, and still
+/// denies the same text from another session or a subagent, or with one more assignment.
+#[test]
+fn the_hooks_own_rewrite_passes_when_sent_again() {
+    let input = |session: &str, agent: Option<(&str, &str)>, command: &str| {
+        let mut v: Value = serde_json::from_str(&bash_input(session, agent, command)).unwrap();
+        v["transcript_path"] = Value::String("/tmp/session.jsonl".into());
+        v.to_string()
+    };
+    let original = "focus-board list 2>&1 | head -12";
+    let reply: Value =
+        serde_json::from_slice(&hook(&input("sess-1", None, original)).stdout).unwrap();
+    let rewritten = reply["hookSpecificOutput"]["updatedInput"]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(rewritten.ends_with(original));
+
+    let again = hook(&input("sess-1", None, &rewritten));
+    assert!(again.status.success());
+    assert!(
+        again.stdout.is_empty(),
+        "its own rewrite must pass unchanged: {}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+
+    let decision = |session: &str, agent: Option<(&str, &str)>, command: &str| {
+        let out: Value = serde_json::from_slice(&hook(&input(session, agent, command)).stdout)
+            .unwrap_or(Value::Null);
+        out["hookSpecificOutput"]["permissionDecision"].clone()
+    };
+    assert_eq!(
+        decision("sess-2", None, &rewritten),
+        "deny",
+        "another session's rewrite"
+    );
+    assert_eq!(
+        decision("sess-1", Some(("ag-1", "fork")), &rewritten),
+        "deny",
+        "a subagent re-issuing its parent's rewrite"
+    );
+    let smuggled = format!("{rewritten}; FOCUS_BOARD_AGENT=x focus-board add q");
+    assert_eq!(
+        decision("sess-1", None, &smuggled),
+        "deny",
+        "one more assignment after it"
+    );
+}
