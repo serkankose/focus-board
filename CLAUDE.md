@@ -77,6 +77,10 @@ tests that prove it. Read it before designing anything. Don't copy it here.
   `forkedFrom`); see `DESIGN.md`, "Copied sessions".
 - The hook denies any Bash command whose text assigns `FOCUS_BOARD_*`, a heredoc too. Edit such
   text in this repo with the file tools.
+- **A new identity variable goes into `sets_identity`'s list and into every `env_remove` list (the
+  test harness, the end-to-end tests) and `checks/demo-board.sh`, in the same change** (review 08,
+  F4). Anything a hooked command starts inherits the session's identity, tests included: the
+  transcript variable once leaked into a test board that way.
 
 ## Machine resources (owner, 2026-11-21)
 
