@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::identity::{Names, scan_names};
+use crate::identity::{Names, clean_name, scan_names};
 
 /// Where Claude Code keeps transcripts: `FOCUS_BOARD_PROJECTS`, else `~/.claude/projects`.
 pub fn projects_dir() -> Option<PathBuf> {
@@ -20,6 +20,79 @@ pub fn projects_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(dir));
     }
     crate::home_dir().map(|h| h.join(".claude").join("projects"))
+}
+
+/// Claude Code's live session registry: `FOCUS_BOARD_SESSIONS`, else `~/.claude/sessions`.
+pub fn registry_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("FOCUS_BOARD_SESSIONS").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    crate::home_dir().map(|h| h.join(".claude").join("sessions"))
+}
+
+/// A running session's name in the registry, and how it came: `user` (the owner's `/rename`),
+/// `auto` (Claude's label from the talk) or `derived` (the folder and a short id).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Registered {
+    pub name: String,
+    pub source: String,
+    since: i64,
+}
+
+/// Every session the registry names, by session id: `<pid>.json` files with `sessionId`,
+/// `name`, `nameSource` and `nameSince`. Only `.json` files are read; the `.key` files beside them
+/// hold secrets and are never opened. When two files name one session, the newer name wins.
+pub fn registered_names(dir: &Path) -> HashMap<String, Registered> {
+    let mut out: HashMap<String, Registered> = HashMap::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(d) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let text = |k: &str| d.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let (session, name) = (text("sessionId"), clean_name(&text("name")));
+        if session.is_empty() || name.is_empty() {
+            continue;
+        }
+        let since = d.get("nameSince").and_then(|v| v.as_i64()).unwrap_or(0);
+        let found = Registered {
+            name,
+            source: text("nameSource"),
+            since,
+        };
+        match out.get(&session) {
+            Some(known) if known.since >= since => {}
+            _ => {
+                out.insert(session, found);
+            }
+        }
+    }
+    out
+}
+
+/// The name to show (owner, 2026-11-21): the owner's own `/rename` first (the registry's `user`
+/// name), then a title in the transcript, then Claude's label (registry `auto`, else the
+/// transcript's). Never a `derived` name, which is half a hash. `None` leaves the session its
+/// made-up name.
+pub fn best_name(registered: Option<&Registered>, names: &Names) -> Option<String> {
+    let from = |source: &str| {
+        registered
+            .filter(|r| r.source == source)
+            .map(|r| r.name.clone())
+    };
+    from("user")
+        .or_else(|| names.title.clone())
+        .or_else(|| from("auto"))
+        .or_else(|| names.label.clone())
 }
 
 /// What the watcher knows of one session's transcript.
@@ -33,46 +106,57 @@ struct Watched {
 
 pub struct NameWatcher {
     projects: PathBuf,
+    registry: Option<PathBuf>,
     sessions: HashMap<String, Watched>,
 }
 
 impl NameWatcher {
-    pub fn new(projects: PathBuf) -> NameWatcher {
+    /// Watches transcripts under `projects` and, when given, the session registry `registry`.
+    pub fn new(projects: PathBuf, registry: Option<PathBuf>) -> NameWatcher {
         NameWatcher {
             projects,
+            registry,
             sessions: HashMap::new(),
         }
+    }
+
+    /// The watcher for this machine's Claude Code folders.
+    pub fn from_env() -> Option<NameWatcher> {
+        Some(NameWatcher::new(projects_dir()?, registry_dir()))
     }
 
     /// The sessions whose name in their transcript differs from the board's, as
     /// `(session id, name)`. `sessions` holds each session's id and its name on the board.
     pub fn changed(&mut self, sessions: &[(String, String)]) -> Vec<(String, String)> {
+        let registered = self
+            .registry
+            .as_deref()
+            .map(registered_names)
+            .unwrap_or_default();
         let mut out = Vec::new();
         for (session_id, on_board) in sessions {
             let watched = self.sessions.entry(session_id.clone()).or_default();
             if watched.path.is_none() {
                 watched.path = find_transcript(&self.projects, session_id);
             }
-            let Some(path) = watched.path.clone() else {
-                continue;
-            };
-            let Ok(len) = path.metadata().map(|m| m.len()) else {
-                continue;
-            };
-            if len < watched.offset {
-                // Shorter than what was read: rewritten; read it again from the start.
-                *watched = Watched {
-                    path: Some(path.clone()),
-                    ..Watched::default()
-                };
-            }
-            if len > watched.offset
-                && let Some((names, read)) = read_from(&path, watched.offset, len)
+            if let Some(path) = watched.path.clone()
+                && let Ok(len) = path.metadata().map(|m| m.len())
             {
-                watched.names = std::mem::take(&mut watched.names).then(names);
-                watched.offset += read;
+                if len < watched.offset {
+                    // Shorter than what was read: rewritten; read it again from the start.
+                    *watched = Watched {
+                        path: Some(path.clone()),
+                        ..Watched::default()
+                    };
+                }
+                if len > watched.offset
+                    && let Some((names, read)) = read_from(&path, watched.offset, len)
+                {
+                    watched.names = std::mem::take(&mut watched.names).then(names);
+                    watched.offset += read;
+                }
             }
-            if let Some(name) = watched.names.name()
+            if let Some(name) = best_name(registered.get(session_id), &watched.names)
                 && &name != on_board
             {
                 out.push((session_id.clone(), name));

@@ -5,7 +5,6 @@
 //! so the change feed reads the database, never an in-server event.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -48,11 +47,11 @@ pub const RENAME_WATCH: Duration = Duration::from_secs(2);
 
 /// Serves the board on `listener` until the process ends. The caller binds the listener, to
 /// 127.0.0.1 only.
-/// `projects` is Claude Code's transcript folder; with it, the server follows sessions' renames.
+/// With a `watcher`, the server follows sessions' renames.
 pub async fn serve(
     listener: TcpListener,
     store: Store,
-    projects: Option<PathBuf>,
+    watcher: Option<NameWatcher>,
 ) -> std::io::Result<()> {
     let port = listener.local_addr()?.port();
     let app = App {
@@ -60,8 +59,8 @@ pub async fn serve(
         hosts: Arc::new([format!("127.0.0.1:{port}"), format!("localhost:{port}")]),
         renames: Arc::new(AtomicU64::new(0)),
     };
-    if let Some(projects) = projects {
-        tokio::spawn(watch_renames(app.clone(), NameWatcher::new(projects)));
+    if let Some(watcher) = watcher {
+        tokio::spawn(watch_renames(app.clone(), watcher));
     }
     axum::serve(listener, router(app)).await
 }

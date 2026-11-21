@@ -48,9 +48,13 @@ impl Board {
                 .unwrap();
             runtime.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                focus_board::server::serve(listener, store, projects)
-                    .await
-                    .unwrap();
+                focus_board::server::serve(
+                    listener,
+                    store,
+                    projects.map(|p| focus_board::names::NameWatcher::new(p, None)),
+                )
+                .await
+                .unwrap();
             });
         });
         Board {

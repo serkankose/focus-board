@@ -9,8 +9,9 @@ use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
 use focus_board::identity::{
-    Identity, Place, fork_parent, is_drive_path, plain_path, session_name,
+    Identity, Names, Place, fork_parent, is_drive_path, plain_path, transcript_names,
 };
+use focus_board::names::{best_name, registered_names, registry_dir};
 use focus_board::store::{
     Cell, Field, Filter, ItemId, ItemSummary, NewItem, OWNER, Store, Writer, label_in,
 };
@@ -223,7 +224,7 @@ fn serve(port: u16) -> Result<(), String> {
             .map_err(|e| format!("127.0.0.1:{port}: {e}"))?;
         let addr = listener.local_addr().map_err(|e| e.to_string())?;
         eprintln!("focus-board serve: http://{addr}");
-        server::serve(listener, store, focus_board::names::projects_dir())
+        server::serve(listener, store, focus_board::names::NameWatcher::from_env())
             .await
             .map_err(|e| e.to_string())
     })
@@ -258,12 +259,20 @@ fn writer() -> Result<(Identity, Place, Store), String> {
     {
         who.parent_session = parent;
     }
-    // A session's name, read on every write so it follows a rename (#189/a).
-    if who.agent_id.is_empty()
-        && !who.transcript.is_empty()
-        && let Some(name) = session_name(Path::new(&who.transcript))
-    {
-        who.name = name;
+    // A session's name, read on every write so it follows a rename (#189/a): the owner's
+    // /rename in Claude Code's registry, else the transcript's title, else Claude's label.
+    if who.agent_id.is_empty() {
+        let names = if who.transcript.is_empty() {
+            Names::default()
+        } else {
+            transcript_names(Path::new(&who.transcript))
+        };
+        let registered = registry_dir()
+            .map(|dir| registered_names(&dir))
+            .unwrap_or_default();
+        if let Some(name) = best_name(registered.get(&who.session_id), &names) {
+            who.name = name;
+        }
     }
     Ok((who, place, store))
 }

@@ -109,7 +109,7 @@ check "where ignores the data folder" lib.rs command where_shows_the_board 's/ba
 check "the label beats the title"    identity.rs store session_names_read_from_the_transcript 's/self\.title\.clone\(\)\.or_else\(\|\| self\.label\.clone\(\)\)/self.label.clone().or_else(|| self.title.clone())/'
 check "a later label hides a title"  identity.rs names the_watch_follows_a_rename 's/title: later\.title\.or\(self\.title\),/title: later.title,/'
 check "half lines are read"          names.rs names the_watch_follows_a_rename 's/let whole = bytes\.iter\(\)\.rposition\(\|&b\| b == b\x27\\n\x27\)\.map_or\(0, \|i\| i \+ 1\);/let whole = bytes.len();/'
-check "renames are not watched"      server.rs server a_rename_reaches_the_board_without_a_write 's/tokio::spawn\(watch_renames\(app\.clone\(\), NameWatcher::new\(projects\)\)\);/let _ = projects;/'
+check "renames are not watched"      server.rs server a_rename_reaches_the_board_without_a_write 's/tokio::spawn\(watch_renames\(app\.clone\(\), watcher\)\);/let _ = watcher;/'
 check "the first title wins"         identity.rs store session_names_read_from_the_transcript 's/title = text\("customTitle"\)\.filter\(\|t\| !t\.is_empty\(\)\)\.or\(title\)/title = title.or(text("customTitle").filter(|t| !t.is_empty()))/'
 check "sessions show as hashes"      store.rs store a_session_name_follows_a_rename 's/\(true, true\) => made_up_name\(session_id\),/(true, true) => String::new(),/'
 check "a rename is not followed"     store.rs store a_session_name_follows_a_rename 's/if who\.agent_id\.is_empty\(\) && !who\.name\.is_empty\(\) \{/if false {/'
@@ -117,6 +117,10 @@ check "old writers stay unnamed"     store.rs store a_session_name_follows_a_ren
 check "names not read on write"      main.rs command a_session_shows_its_rename_title 's/who\.name = name;/let _ = name;/'
 check "wait ignores the answer"      main.rs command wait_ends_when_the_owner_answers 's/if answered > after\.unwrap_or\(0\) \|\| closed \{/if closed {/'
 check "own rewrite denied when re-sent" hook.rs command the_hooks_own_rewrite_passes_when_sent_again 's/&& !sets_identity\(rest\)/\&\& false \&\& !sets_identity(rest)/'
+check "a title beats the owner's rename" names.rs names the_registry_names_running_sessions 's/from\("user"\)\n(\s*)\.or_else\(\|\| names\.title\.clone\(\)\)/names.title.clone()\n$1.or_else(|| from("user"))/'
+check "derived names are used"       names.rs names the_registry_names_running_sessions 's/\.or_else\(\|\| names\.label\.clone\(\)\)\n\}/.or_else(|| names.label.clone())\n        .or_else(|| from("derived"))\n}/'
+check "the older registry name wins" names.rs names the_registry_names_running_sessions 's/Some\(known\) if known\.since >= since => \{\}/Some(known) if known.since <= since => {}/'
+check "a write ignores the registry" main.rs command a_write_takes_the_registry_name 's/best_name\(registered\.get\(&who\.session_id\), &names\)/best_name(None, \&names)/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
 cp -r .pristine/src/. src/

@@ -139,6 +139,13 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   - A session shows the last title it was given with `/rename` (`custom-title` lines in its
     transcript, `customTitle`), else Claude Code's last label (`agent-name`, `agentName`), else a
     fixed two-word name made from its id (`identity::made_up_name`, like `plain-crane`).
+  - Claude Code also keeps each running session's current name in `~/.claude/sessions/<pid>.json`
+    (`FOCUS_BOARD_SESSIONS` overrides), with how it came: `user` (the owner's `/rename`), `auto`
+    (Claude's label) or `derived` (folder plus a short id). Many long sessions' transcripts hold no
+    name line at all, so the registry is read too (owner, 2026-11-21: "Lens is still showing
+    pulceed"). The order: a `user` name, else a transcript title, else an `auto` name, else a
+    transcript label, else the made-up name. `derived` names are never used, since they are half a
+    hash. Only the `.json` files are read; the `.key` files beside them hold secrets.
   - The command reads it on every write. The server also watches each session's transcript
     (`src/names.rs`; `~/.claude/projects/*/<session id>.jsonl`, or `FOCUS_BOARD_PROJECTS`):
     it reads the file in full once, then only the bytes added. So a `/rename` reaches the page
@@ -231,7 +238,8 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* Sessions have names, never hashes; they follow a rename | `session_names_read_from_the_transcript`, `made_up_names_are_fixed_and_never_hashes`, `a_session_name_follows_a_rename`, `a_session_shows_its_rename_title` (through the hook), and the page check "no session shows as a hash" |
 | *(owner's ask)* `wait` ends when the owner answers | `wait_ends_when_the_owner_answers`, `wait_returns_at_once_or_times_out` |
 | *(owner's ask)* A rename reaches the board without a write | `the_watch_follows_a_rename`, `a_rewritten_transcript_is_read_again`, `a_rename_reaches_the_board_without_a_write` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 62 checks |
+| *(owner's ask)* The registry's names, in order | `the_registry_names_running_sessions`, `a_write_takes_the_registry_name` |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 66 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

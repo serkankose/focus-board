@@ -44,7 +44,7 @@ fn the_watch_follows_a_rename() {
     let path = transcript(dir.path(), "s1");
     append(&path, &label("check branch activity"));
     append(&path, &title("Smith"));
-    let mut watcher = NameWatcher::new(dir.path().to_path_buf());
+    let mut watcher = NameWatcher::new(dir.path().to_path_buf(), None);
     let on_board = |name: &str| vec![("s1".to_string(), name.to_string())];
 
     assert_eq!(
@@ -93,12 +93,63 @@ fn a_rewritten_transcript_is_read_again() {
     let dir = tempfile::tempdir().unwrap();
     let path = transcript(dir.path(), "s1");
     append(&path, &title(&"long title ".repeat(5)));
-    let mut watcher = NameWatcher::new(dir.path().to_path_buf());
+    let mut watcher = NameWatcher::new(dir.path().to_path_buf(), None);
     let on_board = vec![("s1".to_string(), "x".to_string())];
     assert_eq!(watcher.changed(&on_board).len(), 1);
     std::fs::write(&path, title("Lens")).unwrap();
     assert_eq!(
         watcher.changed(&on_board),
         vec![("s1".into(), "Lens".into())]
+    );
+}
+
+/// The owner's ask (2026-11-21): sessions renamed in Claude Code show their name. Claude Code's
+/// live registry (`~/.claude/sessions/<pid>.json`) holds it, with how it came: the owner's
+/// `/rename` (`user`) beats a transcript title, which beats Claude's label (`auto`); a `derived`
+/// name (folder plus a short id) is never used. The newer of two files wins; `.key` files are never
+/// read.
+#[test]
+fn the_registry_names_running_sessions() {
+    let projects = tempfile::tempdir().unwrap();
+    let registry = tempfile::tempdir().unwrap();
+    let reg = |file: &str, session: &str, name: &str, source: &str, since: i64| {
+        let body =
+            json!({ "sessionId": session, "name": name, "nameSource": source, "nameSince": since });
+        std::fs::write(registry.path().join(file), body.to_string()).unwrap();
+    };
+    reg("101.json", "s1", "claude", "user", 1);
+    reg("102.json", "s1", "Lens", "user", 2);
+    reg("103.json", "s2", "switch session lens", "auto", 1);
+    reg("104.json", "s3", "pulceed-2b", "derived", 1);
+    reg("105.json", "s4", "an auto label", "auto", 1);
+    std::fs::write(
+        registry.path().join("101.secretkey.key"),
+        "not json, never read",
+    )
+    .unwrap();
+    append(&transcript(projects.path(), "s1"), &title("Smith"));
+    append(
+        &transcript(projects.path(), "s4"),
+        &title("Title from the transcript"),
+    );
+
+    let mut watcher = NameWatcher::new(
+        projects.path().to_path_buf(),
+        Some(registry.path().to_path_buf()),
+    );
+    let on_board: Vec<(String, String)> = ["s1", "s2", "s3", "s4"]
+        .iter()
+        .map(|s| (s.to_string(), "made-up".to_string()))
+        .collect();
+    let mut changed = watcher.changed(&on_board);
+    changed.sort();
+    assert_eq!(
+        changed,
+        vec![
+            ("s1".into(), "Lens".into()),
+            ("s2".into(), "switch session lens".into()),
+            ("s4".into(), "Title from the transcript".into()),
+        ],
+        "s3's derived name is not used"
     );
 }

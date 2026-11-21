@@ -36,7 +36,9 @@ impl Board {
             // must never read it.
             .env_remove("FOCUS_BOARD_TRANSCRIPT")
             // Every session's shell has this; it must never count as an identity.
-            .env("CLAUDE_CODE_SESSION_ID", "shell-session-id");
+            .env("CLAUDE_CODE_SESSION_ID", "shell-session-id")
+            // The board reads Claude Code's session registry for names; tests use their own.
+            .env("FOCUS_BOARD_SESSIONS", self.dir.path().join("sessions"));
         if let Some((session, agent, agent_type)) = who {
             c.env("FOCUS_BOARD_SESSION", session)
                 .env("FOCUS_BOARD_AGENT", agent)
@@ -683,4 +685,18 @@ fn the_hooks_own_rewrite_passes_when_sent_again() {
         "deny",
         "one more assignment after it"
     );
+}
+
+/// A session's write takes the name Claude Code's registry gives it (the owner's `/rename`),
+/// even when its transcript holds no name at all.
+#[test]
+fn a_write_takes_the_registry_name() {
+    let board = Board::new();
+    let registry = board.dir.path().join("sessions");
+    std::fs::create_dir_all(&registry).unwrap();
+    let entry = serde_json::json!({ "sessionId": "sess-1", "name": "Lens", "nameSource": "user", "nameSince": 1 });
+    std::fs::write(registry.join("4242.json"), entry.to_string()).unwrap();
+    board.ok(S, &["add", "q?"]);
+    let listed = board.ok(None, &["list"]);
+    assert!(listed.contains("(Lens ·"), "{listed}");
 }

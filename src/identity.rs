@@ -165,8 +165,15 @@ pub fn fork_parent(transcript: &Path, own: &str) -> Option<String> {
 /// last label (`agent-name` lines, `agentName`). `None` when the transcript has neither. It follows
 /// a rename, since the last line wins. Undocumented fields, seen on Claude Code 2.1.329.
 pub fn session_name(transcript: &Path) -> Option<String> {
-    let file = std::fs::File::open(transcript).ok()?;
-    scan_names(std::io::BufReader::new(file)).name()
+    transcript_names(transcript).name()
+}
+
+/// The names a whole transcript gives; none when it cannot be read.
+pub fn transcript_names(transcript: &Path) -> Names {
+    match std::fs::File::open(transcript) {
+        Ok(file) => scan_names(std::io::BufReader::new(file)),
+        Err(_) => Names::default(),
+    }
 }
 
 /// The names a stretch of a transcript gives: its last `/rename` title and its last label.
@@ -216,7 +223,7 @@ pub fn scan_names(reader: impl std::io::BufRead) -> Names {
 }
 
 /// A name as the board shows it: one line, no control characters, at most 80 characters.
-fn clean_name(raw: &str) -> String {
+pub fn clean_name(raw: &str) -> String {
     let one_line: String = raw
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
