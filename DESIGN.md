@@ -235,10 +235,17 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
      hand-set one.
    - systemd opens the log file before it would create a `StateDirectory=`, so the first start
      failed with `209/STDOUT`. The install script creates the folder.
-   - **A session not in auto mode** (V, the owner, 2026-11-21): `focus-board list` asked for
-     permission, and the prompt showed the plain command, not the hook's `export …` prefix. So the
-     rewrite does not change what the owner is asked. Not yet seen: whether an allow rule such as
-     `Bash(focus-board:*)` matches, which would stop the asking.
+   - **A session not in auto mode** (V, the owner, 2026-11-21, 20:20): the prompt shows the
+     *rewritten* command (`export FOCUS_BOARD_SESSION='…' …; focus-board list`), and the global
+     allow rule `Bash(focus-board *)` does not stop it. So in such a session every board call
+     asks. The prompt offers "don't ask again for: export *": never choose it, since it would also
+     allow `export X=$(…)`, which runs any command.
+     - Correction: a note at 20:19 said the plain command was shown. That came from a misread of
+       the first prompt (owner, 20:21: "my mistake"), so the note was wrong.
+     - **Accepted** (owner, 2026-11-21, "#170/b"): left as it is. Sessions in auto mode, the
+       owner's default, are not asked; others ask on each board call. The alternative,
+       passing the identity as an option (`focus-board --as '…'`) so the allow rule would match,
+       was not built. The rule `Bash(focus-board *)` stays in the global settings.
 
 ## Platforms
 
