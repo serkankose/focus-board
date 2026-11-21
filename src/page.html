@@ -85,6 +85,7 @@ dialog ol { padding-left: 18px; }
       <option value="all">all</option>
     </select>
   </label>
+  <input id="q" type="search" placeholder="search all text" aria-label="Search">
   <span id="scope" class="muted"></span>
   <span id="live" class="muted">connecting…</span>
 </header>
@@ -170,6 +171,8 @@ function query() {
   if (n) p.set(n.kind, n.value);
   const status = $("status").value;
   if (status !== "all") p.set("status", status);
+  const typed = $("q").value.trim();
+  if (typed) p.set("q", typed);
   return p.toString();
 }
 
@@ -461,6 +464,8 @@ async function showHistory(itemId, writerId, field) {
 
 $("project").addEventListener("change", (e) => select(e.target.value ? "project" : null, e.target.value));
 $("status").addEventListener("change", () => refresh());
+let typing = null;
+$("q").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(refresh, 250); });
 refresh();
 setInterval(poll, POLL_MS);
 </script>

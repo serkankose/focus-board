@@ -88,14 +88,13 @@ CREATE TRIGGER IF NOT EXISTS writers_only_append BEFORE INSERT ON writers
     WHEN EXISTS (SELECT 1 FROM writers WHERE id = NEW.id
                  OR (session_id = NEW.session_id AND agent_id = NEW.agent_id))
     BEGIN SELECT RAISE(ABORT, 'a writer is never replaced'); END;
-PRAGMA user_version = 1;
 COMMIT;
 "#;
 
 /// The board's layout version, kept in SQLite's `user_version` and set by [`SCHEMA`]. A board
 /// written by a newer focus-board is refused rather than read with the wrong layout. Since the
 /// triggers forbid changing rows in place, a layout change is a new version (review R11).
-pub const LAYOUT: i64 = 1;
+pub const LAYOUT: i64 = 2;
 
 /// The rows a timeline draws from: `?1` after this row, `?2` project, `?3` workspace, `?4` node.
 /// A node's timeline holds the writes on the items raised in that branch, whoever made them (the
@@ -371,6 +370,7 @@ impl Store {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        upgrade(&conn)?;
         fill_names(&conn)?;
         Ok(Store { conn })
     }
@@ -644,6 +644,20 @@ impl Store {
         )
     }
 
+    /// The items whose text matches every word typed, in any version of any cell: question,
+    /// options, answers, feedback. Oldest first; nothing for an empty query.
+    pub fn search(&self, typed: &str) -> Result<Vec<ItemId>, rusqlite::Error> {
+        let query = text_query(typed);
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT item FROM cell_text WHERE cell_text MATCH ?1 ORDER BY item",
+        )?;
+        let rows = stmt.query_map(params![query], |r| r.get(0))?;
+        rows.collect()
+    }
+
     /// When each writer last wrote: `(writer, row, time)` of its newest cell.
     pub fn last_writes(&self) -> Result<Vec<(WriterId, i64, String)>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
@@ -807,6 +821,55 @@ fn resolve_writer(tx: &Transaction, who: &Identity, place: &Place) -> Result<Wri
         place,
         "",
     )
+}
+
+/// Brings a board to [`LAYOUT`], in one transaction that re-reads the version, so two processes
+/// opening it at once upgrade it once.
+/// - Layout 2 (2026-11-21, the owner's "we need full text search"): the `cell_text` full text
+///   index (FTS5) over every version of every cell, kept by a trigger on `cells`, and filled from
+///   the cells already there. A cell's text is all its JSON values: a question, the options' texts,
+///   a pick and a text.
+fn upgrade(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| {
+        let layout: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if layout < 2 {
+            conn.execute_batch(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS cell_text
+                     USING fts5(text, item UNINDEXED, cell UNINDEXED);
+                 CREATE TRIGGER IF NOT EXISTS cells_indexed AFTER INSERT ON cells BEGIN
+                     INSERT INTO cell_text (text, item, cell) VALUES
+                         ((SELECT group_concat(value, ' ') FROM json_each(NEW.value)),
+                          NEW.item, NEW.id);
+                 END;
+                 DELETE FROM cell_text;
+                 INSERT INTO cell_text (text, item, cell)
+                     SELECT (SELECT group_concat(value, ' ') FROM json_each(c.value)), c.item, c.id
+                     FROM cells c;
+                 PRAGMA user_version = 2;",
+            )?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT"),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
+/// The full text query for what a person typed: each word must match, as the start of a word, so
+/// "sqli port" finds "SQLite" and "port". Words are quoted, so no character has a meaning to the
+/// index; a "word" with no letter or digit is dropped.
+pub fn text_query(typed: &str) -> String {
+    typed
+        .split_whitespace()
+        .filter(|w| w.chars().any(char::is_alphanumeric))
+        .map(|w| format!("\"{}\"*", w.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Sessions written before names existed get their made-up name, once, so no session shows as a

@@ -108,6 +108,14 @@ enum Cmd {
     /// Entry points for Claude Code hooks.
     #[command(subcommand)]
     Hook(HookCmd),
+    /// Find items by any words in their question, options, answers or feedback, in every
+    /// project and every status. Each word must match the start of a word.
+    Search {
+        #[arg(required = true)]
+        words: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Print where the board is kept on this machine.
     Where,
     /// Wait for the owner: ends when the owner has answered the item (or answered again after
@@ -204,6 +212,7 @@ fn run(cmd: Cmd) -> Result<(), String> {
             after,
             timeout,
         } => wait(&item, after, timeout),
+        Cmd::Search { words, json } => search(&words.join(" "), json),
         Cmd::Where => {
             let path = db_path().ok_or("no FOCUS_BOARD_DB and no data folder on this machine")?;
             println!("{}", path.display());
@@ -531,6 +540,37 @@ fn show(item: &str, as_json: bool) -> Result<(), String> {
     }
     for c in cells.iter().filter(|c| c.field == "feedback") {
         println!("feedback   {}: {}", label(&writers, c.writer), line(c));
+    }
+    Ok(())
+}
+
+fn search(typed: &str, as_json: bool) -> Result<(), String> {
+    let store = open()?;
+    let found: std::collections::HashSet<ItemId> = store
+        .search(typed)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .collect();
+    let writers = store.writers().map_err(|e| e.to_string())?;
+    let mut items = store.items(&Filter::default()).map_err(|e| e.to_string())?;
+    items.retain(|i| found.contains(&i.id));
+    if as_json {
+        let out: Vec<Value> = items.iter().map(|i| item_json(i, &writers)).collect();
+        println!("{}", Value::Array(out));
+        return Ok(());
+    }
+    if items.is_empty() {
+        println!("nothing found");
+    }
+    for i in &items {
+        println!(
+            "B{:<4} {:<9} {}   ({} · {})",
+            i.id,
+            i.status,
+            i.question,
+            label(&writers, i.author),
+            context(i)
+        );
     }
     Ok(())
 }

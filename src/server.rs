@@ -268,9 +268,21 @@ fn cell_json(c: &Cell) -> Value {
 /// Items matching the filter, each with the current version of every cell.
 async fn items(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
     let filter = filter(&q)?;
+    // `q`: full text search over every version of every cell (layout 2).
+    let typed = q
+        .get("q")
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
     on_store(&app, move |store| {
+        let found: Option<std::collections::HashSet<ItemId>> = match &typed {
+            Some(typed) => Some(store.search(typed)?.into_iter().collect()),
+            None => None,
+        };
         let mut out = Vec::new();
         for i in store.items(&filter)? {
+            if found.as_ref().is_some_and(|f| !f.contains(&i.id)) {
+                continue;
+            }
             let cells: Vec<Value> = store.current(i.id)?.iter().map(cell_json).collect();
             out.push(json!({
                 "id": i.id,

@@ -1303,3 +1303,114 @@ fn a_session_name_follows_a_rename() {
         "an old writer gets its name on open"
     );
 }
+
+/// The owner's ask (2026-11-21): "we need full text search". Every word must match the start of a
+/// word, in any version of any cell: question, options, the owner's answer, any feedback.
+#[test]
+fn full_text_search_finds_any_cell_text() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let (me, here) = (session("s"), place("p", "p"));
+    let first = NewItem {
+        question: "Keep SQLite, or store the board another way?".into(),
+        options: vec![
+            ("a".into(), "keep it".into()),
+            ("b".into(), "append-only files".into()),
+        ],
+        ..NewItem::default()
+    };
+    let item = store.add_item(&me, &here, &first).unwrap();
+    let other = store
+        .add_item(&me, &here, &question("Which port?"))
+        .unwrap();
+    store
+        .write_as_session(
+            &me,
+            &here,
+            item,
+            Field::Feedback,
+            &feedback("the indexer is slow"),
+            None,
+        )
+        .unwrap();
+    store
+        .write_as_session(
+            &me,
+            &here,
+            item,
+            Field::Feedback,
+            &feedback("now it is quick"),
+            None,
+        )
+        .unwrap();
+    store
+        .owner_answer(other, &json!({ "text": "use eighty eight ten" }), None)
+        .unwrap();
+
+    let found = |typed: &str| store.search(typed).unwrap();
+    assert_eq!(found("sqli"), vec![item], "the start of a word");
+    assert_eq!(
+        found("append files"),
+        vec![item],
+        "options' text, every word"
+    );
+    assert_eq!(
+        found("indexer slow"),
+        vec![item],
+        "an older version of feedback counts"
+    );
+    assert_eq!(found("eighty"), vec![other], "the owner's answer");
+    assert!(
+        found("sqlite eighty").is_empty(),
+        "every word must match in one item"
+    );
+    assert!(
+        found("\"; DROP TABLE cells; --").is_empty(),
+        "odd characters mean nothing"
+    );
+    assert!(found("   ").is_empty() && found("--").is_empty());
+}
+
+/// A board from layout 1 is brought to layout 2 on open: the full text index is built from the
+/// cells already there, and new cells are indexed as they come.
+#[test]
+fn an_older_board_is_brought_to_layout_2() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let item = store
+        .add_item(
+            &session("s"),
+            &place("p", "p"),
+            &question("Rename the branch?"),
+        )
+        .unwrap();
+    drop(store);
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.execute_batch("DROP TRIGGER cells_indexed; DROP TABLE cell_text; PRAGMA user_version = 1;")
+        .unwrap();
+    drop(raw);
+
+    let mut store = Store::open(&db).unwrap();
+    assert_eq!(
+        store.search("rename branch").unwrap(),
+        vec![item],
+        "old cells were indexed"
+    );
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    let version: i64 = raw
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, LAYOUT);
+    let later = store
+        .add_item(
+            &session("s"),
+            &place("p", "p"),
+            &question("Merge the docs?"),
+        )
+        .unwrap();
+    assert_eq!(
+        store.search("docs").unwrap(),
+        vec![later],
+        "new cells are indexed too"
+    );
+}

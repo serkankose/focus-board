@@ -700,3 +700,23 @@ fn a_write_takes_the_registry_name() {
     let listed = board.ok(None, &["list"]);
     assert!(listed.contains("(Lens ·"), "{listed}");
 }
+
+/// `focus-board search` finds items in every project and status, by any words of their text.
+#[test]
+fn search_finds_items_by_their_text() {
+    let board = Board::new();
+    board.ok(S, &["add", "Keep SQLite, or another store?", "-o", "a=yes"]);
+    board.ok(S, &["add", "Which port?"]);
+    board.ok(S, &["feedback", "B2", "eighty eight ten is free"]);
+    board.ok(S, &["status", "B1", "closed"]);
+    let found = board.ok(None, &["search", "sqli"]);
+    assert!(found.contains("B1") && !found.contains("B2"), "{found}");
+    let found: Value =
+        serde_json::from_str(&board.ok(None, &["search", "eighty", "free", "--json"])).unwrap();
+    assert_eq!(found[0]["id"], "B2");
+    assert!(
+        board
+            .ok(None, &["search", "nowhere"])
+            .contains("nothing found")
+    );
+}

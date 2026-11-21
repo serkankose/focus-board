@@ -162,6 +162,18 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
     wakes the session when the owner saves on the page. No hook is involved.
   - It only wakes a session that is still open.
 
+## Full text search (owner, 2026-11-21: "we need full text search")
+
+- **Layout 2**: an FTS5 table `cell_text` indexes every version of every cell (all of a value's JSON
+  texts: a question, the options, a pick and a text). A trigger on `cells` keeps it, and the
+  upgrade from layout 1 fills it from the cells already there, in one transaction that re-reads the
+  version.
+- A query takes every word typed as the start of a word, and all must match in one item. Words are
+  quoted, so no character has a meaning to the index.
+- `focus-board search WORDS [--json]` covers all projects and statuses; `/api/items?q=` and the
+  page's search box narrow the table. Old versions count: a word since edited away still finds its
+  item.
+
 ## The command
 
 | Command | Does |
@@ -230,7 +242,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(review R6)* A shared folder name does not mix projects | `a_shared_folder_name_does_not_mix_projects` |
 | *(review R8)* The timeline is cut and says so; active items on the server | `timeline_is_cut_and_says_so`, `timeline_cut_and_active_filter` |
 | *(review R10, R11, G8)* Repeated letters, a newer layout, the author-only question | `a_repeated_option_letter_is_refused`, `a_newer_layout_is_refused`, `only_the_author_writes_the_question` |
-| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 14 checks in headless Firefox |
+| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 15 checks in headless Firefox |
 | *(owner's ask)* Each item keeps where it was raised: repo, worktree, branch, path | `item_context_is_recorded_at_raise_time`, the branch asserts in `projects_and_worktrees_stay_apart`, and the page check "each item shows its repo, worktree, branch and full path" |
 | A board from before layout versions is refused | `an_unversioned_board_is_refused` |
 | *(review R3)* A copied session finds its parent and sits under it | `fork_parent_reads_the_transcript`, `a_copied_session_files_under_its_parent`, `a_copied_session_writes_under_its_parent` (the binary, through the hook), and the page check "a copied session sits under the session it was copied from" |
@@ -239,7 +251,8 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* `wait` ends when the owner answers | `wait_ends_when_the_owner_answers`, `wait_returns_at_once_or_times_out` |
 | *(owner's ask)* A rename reaches the board without a write | `the_watch_follows_a_rename`, `a_rewritten_transcript_is_read_again`, `a_rename_reaches_the_board_without_a_write` |
 | *(owner's ask)* The registry's names, in order | `the_registry_names_running_sessions`, `a_write_takes_the_registry_name` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 66 checks |
+| *(owner's ask)* Full text search | `full_text_search_finds_any_cell_text`, `an_older_board_is_brought_to_layout_2`, `search_finds_items_by_their_text`, `the_page_can_search`, and the page check "searching narrows the table" |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 71 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

@@ -185,6 +185,18 @@ try:
         .filter(t => /^session [0-9a-z-]{8}$/.test(t));""")
     check("no session shows as a hash", not hashes, ", ".join(hashes) or "none")
 
+    # Full text search (the owner's ask): typing narrows the table, clearing brings it back.
+    TYPE = """const q = document.getElementById('q'); q.value = arguments[0];
+              q.dispatchEvent(new Event('input', { bubbles: true }));"""
+    try:
+        m.js(TYPE, "ship tod")
+        m.wait("return document.querySelectorAll('#items tr').length === 1", "the search to narrow the table", timeout=5)
+        check("searching narrows the table", m.js(ROWS) == ["B3"], ", ".join(m.js(ROWS)))
+        m.js(TYPE, "")
+        m.wait("return document.querySelectorAll('#items tr').length > 1", "the table to come back", timeout=5)
+    except RuntimeError as e:
+        check("searching narrows the table", False, str(e))
+
     labels = m.js("return [...document.querySelectorAll('nav button.node')].map(b => b.innerText.split(' ·')[0])")
     check("a project with one workspace has no workspace level; one with two has it",
           labels.count("beta") == 1 and labels.count("alpha") == 2 and "alpha-feature" in labels,

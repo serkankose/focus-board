@@ -574,3 +574,15 @@ fn a_rename_reaches_the_board_without_a_write() {
         "{before} -> {after}"
     );
 }
+
+/// The page's search: `/api/items?q=` narrows the items to those whose text matches.
+#[test]
+fn the_page_can_search() {
+    let board = Board::start();
+    let (_, all) = board.get("/api/items");
+    assert_eq!(all["items"].as_array().unwrap().len(), 1);
+    let (_, hit) = board.get("/api/items?q=sqli");
+    assert_eq!(hit["items"].as_array().unwrap().len(), 1, "{hit}");
+    let (_, miss) = board.get("/api/items?q=nothing%20here");
+    assert_eq!(miss["items"], json!([]));
+}
