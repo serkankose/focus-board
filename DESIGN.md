@@ -1,0 +1,172 @@
+# focus-board — design
+
+Draft, 2026-11-21, for the owner's approval before any code. [BRIEF.md](BRIEF.md) is the
+requirement; this says how. Items marked **unverified** are guesses until the spike runs.
+
+## One program
+
+- One Rust binary, `focus-board`, installed with `cargo install` onto `PATH`.
+- `focus-board serve`: the web page and its API, on `127.0.0.1:8810`.
+- Every other subcommand is the sessions' command. It opens the database itself, in its own
+  transaction, so it works with the server down.
+- Crates: `rusqlite` (SQLite bundled), `axum` + `tokio` for the server, `clap`, `serde_json`.
+- The page is one HTML file with plain JavaScript, compiled into the binary. No build step.
+- Data: `$XDG_DATA_HOME/focus-board/board.sqlite` (default `~/.local/share/focus-board/`).
+  `FOCUS_BOARD_DB` overrides it; tests use a temp folder.
+- Logs: `$XDG_STATE_HOME/focus-board/`.
+
+## Tables
+
+All writes go through one function in the store, used by both the command and the server.
+
+- **`writers`**: one row per writer.
+  - Fields: kind (`owner` or `session`), Claude's session id, agent id (empty for the session
+    itself), agent type, parent writer, project, workspace, name, first write.
+  - Unique on (session id, agent id). A session or agent that has never written gets a row on
+    its first write, with no setup.
+  - Exactly one `owner` row.
+- **`items`**: one row per item.
+  - Fields: board id, parent item (for sub-items), the writer that raised it, and the session's
+    own number kept as a label (`#9906`).
+  - Board ids are shown as `B12`, so they never look like a session's `#12`.
+- **`cells`**: every version of every cell, never changed.
+  - Fields: row id, item, writer (who owns the cell), field, version, value, client (`page` or
+    `cli`), time written.
+  - Unique on (item, writer, field, version).
+  - The current value is the highest version. A cell's history is all its rows.
+  - The row id is the board's one clock: the timeline and the page's change feed both order by it,
+    never by timestamps.
+
+**Who owns which cell**
+
+| Field | Owner | Written from |
+|---|---|---|
+| question, options, recommended | the item's author | command |
+| feedback (text, optionally a picked option) | each session, its own | command |
+| answer (an option or free text) | the owner | page only |
+| status (open, closed) | the item's author | command |
+| status (answered, closed) | the owner | page only |
+
+**Status** (owner, 2026-11-21): two status cells, the author's and the owner's. The item shows the
+one written last, by row id. Writing the owner's answer also writes the owner's status as
+`answered`, in the same transaction. Each writer still writes only its own cells.
+
+## The write rules
+
+- Each write runs in `BEGIN IMMEDIATE`, with WAL mode and a busy timeout. Two writers on the same row
+  queue for a few milliseconds and both land.
+- The write checks that this writer owns this cell. Then it takes the current version. If the
+  write named a version and the cell has moved since, it is refused with the newer version. Then it
+  inserts version + 1. The unique index is a second guard against a race.
+- The `answer` field is refused unless the client is `page`. The command has no path that sets
+  `page`. This is a guard against mistakes, as rule 3 says, not a hard boundary.
+- **Nothing is deleted:** SQLite triggers refuse every `UPDATE` and `DELETE` on `items` and
+  `cells`. Closing is a status value.
+
+## How a session knows who it is
+
+A hook runs as its own process, so it cannot set variables in the session's shell. Subagents share
+their parent's process, so the shell alone cannot tell a subagent from its parent.
+
+- **A `PreToolUse` hook on Bash rewrites the command.** When a Bash command calls `focus-board`,
+  the hook (`focus-board hook pre-tool-use`, reading the hook's JSON on stdin) returns the command
+  with `FOCUS_BOARD_SESSION`, `FOCUS_BOARD_AGENT` and `FOCUS_BOARD_AGENT_TYPE` set in front.
+  Claude Code passes hooks `session_id`, and `agent_id` and `agent_type` inside a subagent.
+  - **Checked 2026-11-21 in a main session:** the rewrite works. The hook returns only
+    `updatedInput`, with no `permissionDecision`, so the normal permission checks still run on the
+    rewritten command. A new project-local hook fired without a restart.
+  - The main session's hook input held `session_id`, `transcript_path`, `cwd`, `prompt_id`,
+    `permission_mode`, `tool_use_id`: no agent id (as expected) and no session name.
+  - **Checked 2026-11-21 in a subagent** (`general-purpose`, spawned on the owner's approval): its
+    hook input held the parent's `session_id`, its own `agent_id` and its `agent_type`. The
+    rewritten command saw all three. No field names a parent agent.
+- **No identity, no write.** Without `FOCUS_BOARD_SESSION`, the command reads but refuses to write.
+  It never falls back to `CLAUDE_CODE_SESSION_ID`: a subagent would then write into its parent's
+  cells, which is exactly the brief's fork test failing silently.
+- **Parents.** An Agent-tool fork or subagent has its parent's session id and its own agent id, so
+  its parent is that session's writer. Seen for a subagent; **unverified** for an Agent-tool fork
+  (`subagent_type: fork`), which is expected to behave the same. A session forked with `/branch` or `--fork-session` gets a new session id, and where its
+  parent's id comes from is unknown. Until it is known, such a fork shows as its own session.
+- **Project and workspace** come from the command's working directory at the writer's first write,
+  and stay fixed after that, so a later `cd` does not move a writer.
+  - Workspace: `git rev-parse --show-toplevel`. Project: the main checkout, from
+    `--git-common-dir`, so all worktrees of one repo share a project.
+  - When there is no repo, or the top level is the home folder (which is itself a repo here), the
+    project and workspace are the working directory itself.
+- **Name.** No name has been seen in a session's shell or hook input. `focus-board whoami
+  --name Smith` sets the writer's name label. The name is a label; the id is the key.
+
+## The command
+
+| Command | Does |
+|---|---|
+| `focus-board whoami [--name N]` | shows (or names) this writer |
+| `focus-board list [--project P] [--status S] [--json]` | open items, filtered |
+| `focus-board show B12` | one item: all cells, current versions |
+| `focus-board add "question" --option a="…" --option b="…" [--recommend a] [--label "#9906"] [--parent B3]` | raises an item |
+| `focus-board feedback B12 "text" [--pick b] [--expect V]` | writes this session's feedback |
+| `focus-board history B12` | every version of every cell |
+| `focus-board answer …` | always refused: "the owner answers on the page" |
+
+## The server and the page
+
+- Binds `127.0.0.1:8810` only.
+- **Every route**, reads included, refuses a `Host` other than `127.0.0.1:8810` or
+  `localhost:8810`. Checking writes only would still let a DNS-rebinding site read the board.
+- **Every write** also needs a matching `Origin` and the header `X-Focus-Board: 1`, which a
+  cross-site form cannot send.
+- Routes: `GET /` (the page), `GET /api/items`, `GET /api/tree`, `GET /api/timeline`,
+  `GET /api/history`, `GET /api/changes?after=N`, `POST /api/answer`.
+- **Live updates.** The command writes past the server, so the change feed reads the database: the
+  page asks `/api/changes?after=<last row id>` every 2 s and refetches when it has moved.
+- The page has three parts:
+  - **Table**: open items, filtered by project and status. The owner's answer is edited inline;
+    each session's feedback has its own cell, with when it last wrote.
+  - **Tree**: project, workspace, session, then its forks and subagents. Picking a node narrows the
+    table and timeline to that branch.
+  - **Timeline**: the `cells` rows in row-id order, each naming its writer and its place in the tree.
+
+## Tests — the brief's nine, and two more
+
+| Brief's test | Test |
+|---|---|
+| Two writers, different columns, same row, same moment: both survive | `concurrent_writers_both_land` (two connections, two threads, barrier-started) |
+| A stale version is refused; the cell keeps the newer value | `stale_version_refused` |
+| The command refuses the owner's column | `cli_refuses_answer` (runs the binary) |
+| A fork and its parent each keep their own cell | `fork_and_parent_own_cells` |
+| Two projects, two workspaces of one: never mix | `projects_and_worktrees_stay_apart`, also covering the home-folder case |
+| A new session writes at once, no setup | `first_write_creates_writer` |
+| A fork shows under its parent; timeline interleaves | `fork_in_tree_and_timeline_order` |
+| Every version survives many edits | `all_versions_kept` (1000 edits) and `update_and_delete_refused` (triggers) |
+| Foreign `Origin`, foreign `Host`, or no header: refused | `server_guards` (writes and reads) |
+| *(added)* No identity, no write | `unidentified_write_refused`, also with only `CLAUDE_CODE_SESSION_ID` set |
+| *(added)* The hook rewrites only `focus-board` commands | `hook_rewrites_only_board_calls` |
+
+The tests drive the board with the identity variables set directly. Those tests prove the board's
+logic, not that Claude Code's hook delivers the ids. That part is checked once in the spike below.
+
+## Build order
+
+1. **Spike: does the hook rewrite work?** Install the `PreToolUse` hook in this project's
+   gitignored `.claude/settings.local.json` first, so only sessions here get it (owner,
+   2026-11-21). Run `focus-board whoami` from this session, then from one subagent (spawned only on
+   the owner's explicit approval; auto mode blocked one before). If the rewrite cannot carry the
+   ids, stop and bring that to the owner before anything else. Once it works, it moves to the
+   global settings.
+2. Store, write rules, triggers, and tests 1–8.
+3. The command.
+4. The server, its guards, and the guard tests.
+5. The page: table, tree, timeline, cell history.
+6. Install: `cargo install`, the hook in the global settings, and a systemd user unit for
+   `focus-board serve` that starts at login and restarts after a crash (owner, 2026-11-21).
+
+## Open, the owner's call
+
+- ❓ Approval of this design as a whole.
+
+## Accepted for now
+
+- A session that moves into another worktree mid-session stays under the workspace of its first
+  write.
+- A subagent of a subagent is filed under the session, not under its own parent, unless the hook
+  input turns out to carry the parent agent's id.
