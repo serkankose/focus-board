@@ -75,8 +75,10 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - Checked (2026-11-21, `/branch` then `/fork` by the owner): a copied session gets a new id and
   writes as itself. Its parent is read from its transcript (`requestSessionId`, else
   `forkedFrom`); see `DESIGN.md`, "Copied sessions".
-- The hook denies any Bash command whose text assigns `FOCUS_BOARD_*`, a heredoc too. Edit such
-  text in this repo with the file tools.
+- The hook denies any Bash command whose text assigns one of the four identity variables
+  (`FOCUS_BOARD_SESSION`, `_AGENT`, `_AGENT_TYPE`, `_TRANSCRIPT`), in a heredoc or a grep pattern
+  too. Edit such text in this repo with the file tools. `FOCUS_BOARD_DB` and the other
+  `FOCUS_BOARD_*` paths are not checked.
 - **A new identity variable goes into `sets_identity`'s list and into every `env_remove` list (the
   test harness, the end-to-end tests) and `checks/demo-board.sh`, in the same change** (review 08,
   F4). Anything a hooked command starts inherits the session's identity, tests included: the

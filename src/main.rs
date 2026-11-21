@@ -108,8 +108,8 @@ enum Cmd {
     /// Entry points for Claude Code hooks.
     #[command(subcommand)]
     Hook(HookCmd),
-    /// Find items by any words in their question, options, answers or feedback, in every
-    /// project and every status. Each word must match the start of a word.
+    /// Find the items that hold every word given, each as the start of a word, in their
+    /// question, options, answers or feedback, in every project and every status.
     Search {
         #[arg(required = true)]
         words: Vec<String>,

@@ -88,8 +88,9 @@ fn prefix_for(data: &Value) -> Option<String> {
 }
 
 /// Whether a shell command runs `focus-board` (by name or by a path ending in it) as a command,
-/// not merely mentions it. A miss only means a write is refused for want of ids; a false match
-/// only adds three harmless variables.
+/// not merely mentions it. A miss only means a write is refused for want of ids. A false match,
+/// such as a mention in backticks or at a line start inside a heredoc, only adds four harmless
+/// variables, but in auto mode the rewrite can cancel the review of the calls sent with it.
 pub fn runs_board(command: &str) -> bool {
     // Words that may stand before the command itself: prefixes and shell keywords.
     const SKIP: [&str; 14] = [

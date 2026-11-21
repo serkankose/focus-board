@@ -18,7 +18,9 @@ Open **http://127.0.0.1:8810**. It works on this machine only.
   every earlier version stays one click away (the `v1`, `v2` links).
 - **The tree** on the left shows projects, worktrees and sessions, with each session's subagents
   and copies (`/branch`, `/fork`) under it. Click a node to show only its items.
-- **Search** finds items by any words in their text, in every project, old versions included.
+- **Search** narrows the table to the items that hold every word you type, each as the start of a
+  word ("sqli" finds "SQLite"), old versions included. It works within the status filter and the
+  tree node you picked, so set the filter to "all" to search closed items too.
 - **The status filter** shows open, answered or closed items, or everything.
 - **The timeline**, below the table, lists every write, newest first.
 
@@ -27,11 +29,11 @@ The page refreshes by itself. If it says "not connected", the board's service is
 
 ### Session names
 
-Sessions show their names, never ids:
-1. the name you gave with `/rename`;
-2. else a title in the session's own record;
-3. else Claude Code's label for it;
-4. else a fixed made-up name such as `plain-crane`.
+Sessions show a name, never an id: the first of these that exists.
+1. The name you gave with `/rename`.
+2. A title in the session's own record.
+3. Claude Code's own label for it.
+4. A stable made-up name, such as `plain-crane`.
 
 A rename shows on the page within a few seconds.
 
@@ -41,7 +43,7 @@ The `focus-board` skill tells a session when and how to use the board. In short:
 
 ```sh
 focus-board add "Question?" -o a="first option" -o b="second option" --recommend a
-focus-board wait B12              # run in the background: ends when the owner answers
+focus-board wait B12              # run in the background: ends when the owner answers or closes it
 focus-board list                  # this project's open items; --everywhere for all projects
 focus-board show B12              # the answer, the feedback, every version
 focus-board search some words     # any item, any project, any status
@@ -51,16 +53,26 @@ focus-board status B12 closed     # close your own item once it is settled
 
 - **Run `focus-board` as the first word** of the command. A hook adds the session's identity
   there.
-- **Never set the `FOCUS_BOARD_…` variables yourself.** The hook refuses such a command, so that a
-  subagent cannot write as its parent.
+- **Never set the identity variables yourself**: `FOCUS_BOARD_SESSION`, `FOCUS_BOARD_AGENT`,
+  `FOCUS_BOARD_AGENT_TYPE` and `FOCUS_BOARD_TRANSCRIPT`. The hook refuses any command whose text
+  assigns one, even in a heredoc or a search pattern, so that a subagent cannot write as its
+  parent. The one exception is re-sending the hook's own rewrite (below). Other variables, such as
+  `FOCUS_BOARD_DB`, are not checked.
 - **Only you answer.** A session's write is never your answer, and `focus-board answer` is always
-  refused.
-- **In auto mode**, send a board command on its own, not alongside other commands. If Claude Code
-  asks to re-send the rewritten command (`export …; focus-board …`), send it exactly as shown.
-- **In a session that is not in auto mode**, each board command asks for permission. Answer
-  "Yes". Never choose "don't ask again for: export *": that would allow far more than the board.
+  refused. This guards against mistakes. It is not a lock, since every session runs as you.
+- **In auto mode**, send a board command in a response of its own, not alongside other tool calls.
+  The hook's rewrite can cancel auto mode's review of the calls sent with it, and sometimes of the
+  board command itself. A command that only mentions `focus-board` in backticks or at the start of
+  a line, as a heredoc might, counts as a board command too.
+- **If auto mode asks you to re-send the rewritten command** (`export …; focus-board …`), send it
+  exactly as shown, in the next response. The hook lets its own rewrite through.
+- **In a session that is not in auto mode**, each board command asks for permission, because it
+  runs as the rewritten `export …` command. Answer "Yes". Never choose "don't ask again for:
+  export *": that would also allow `export X=$(…)`, which runs any command.
 
 ## Installing (Linux)
+
+From the repository's folder:
 
 ```sh
 install/linux.sh            # build, install, and start the board's service
@@ -70,12 +82,14 @@ install/linux.sh --remove   # stop the service; the board itself is kept
 The script installs `focus-board` on your `PATH` and runs the board as a systemd user service,
 which starts when you log in. Two more pieces live in your own Claude Code settings:
 
-- **The hook**, in `~/.claude/settings.json`, under `"hooks"`:
+- **The hook**, in `~/.claude/settings.json`: add this entry to the `PreToolUse` list under
+  `"hooks"`, and create the list if there is none. Pasting a whole `"PreToolUse"` key would
+  replace the hooks already there.
 
   ```json
-  "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command",
+  { "matcher": "Bash", "hooks": [{ "type": "command",
     "command": "\"$HOME/.cargo/bin/focus-board\" hook pre-tool-use 2>/dev/null || true",
-    "timeout": 5 }] }]
+    "timeout": 5 }] }
   ```
 
 - **The skill** `focus-board`, in `~/.claude/skills/focus-board/SKILL.md`, which tells sessions
@@ -97,7 +111,7 @@ The code also builds for Windows and macOS, but there is no installer for them y
   the hook is not installed. Reading still works.
 - **"refused: the owner answers on the page"**: as intended; only you answer.
 - **"the board's layout is version N"**: the board was written by a newer `focus-board`. Run
-  `install/linux.sh` to update.
+  `install/linux.sh` from the repository to update.
 
 ## For developers
 
