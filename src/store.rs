@@ -11,7 +11,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::{Value, json};
 
-use crate::identity::{Identity, Place};
+use crate::identity::{Identity, Place, made_up_name};
 
 pub type WriterId = i64;
 pub type ItemId = i64;
@@ -264,51 +264,56 @@ pub struct Writer {
 }
 
 impl Writer {
-    /// How the command and the page name a writer: `owner`, `session 5d1da7e2`,
-    /// `fork ab073b5d in 5d1da7e2`, with the writer's name in front when it has one.
+    /// How the command and the page name a writer on its own: `owner`, a session's name (from
+    /// its `/rename` title, else Claude's label, else a made-up name; never a hash), or an agent
+    /// as `fork ab073b5d in 5d1da7e2`. [`label_in`] names an agent's session by its name too.
     pub fn label(&self) -> String {
         if self.kind == "owner" {
             return "owner".into();
         }
         let short = |id: &str| id.chars().take(8).collect::<String>();
-        let base = if self.agent_id.is_empty() {
-            format!("session {}", short(&self.session_id))
-        } else {
-            let kind = if self.agent_type.is_empty() {
-                "agent"
+        if self.agent_id.is_empty() {
+            return if self.name.is_empty() {
+                made_up_name(&self.session_id)
             } else {
-                &self.agent_type
+                self.name.clone()
             };
-            format!(
-                "{kind} {} in {}",
-                short(&self.agent_id),
-                short(&self.session_id)
-            )
-        };
-        if self.name.is_empty() {
-            base
-        } else {
-            format!("{} ({base})", self.name)
         }
+        let kind = if self.agent_type.is_empty() {
+            "agent"
+        } else {
+            &self.agent_type
+        };
+        format!(
+            "{kind} {} in {}",
+            short(&self.agent_id),
+            short(&self.session_id)
+        )
     }
 }
 
-/// A writer's label among all writers: a session copied from another (`/branch`, `/fork`) says
-/// which, as the brief asks ("labelled with the session it was forked from").
+/// A writer's label among all writers. An agent names its session by the session's name, and a
+/// session copied from another (`/branch`, `/fork`) says which, as the brief asks ("labelled with
+/// the session it was forked from").
 pub fn label_in(writers: &[Writer], id: WriterId) -> String {
     let Some(w) = writers.iter().find(|w| w.id == id) else {
         return format!("writer {id}");
     };
-    let copied_from = (w.kind == "session" && w.agent_id.is_empty())
-        .then_some(w.parent)
-        .flatten()
-        .and_then(|p| writers.iter().find(|x| x.id == p));
-    match copied_from {
-        Some(parent) => {
-            let short: String = parent.session_id.chars().take(8).collect();
-            format!("{} (copy of {short})", w.label())
+    let parent = w.parent.and_then(|p| writers.iter().find(|x| x.id == p));
+    match parent {
+        Some(session) if !w.agent_id.is_empty() => {
+            let kind = if w.agent_type.is_empty() {
+                "agent"
+            } else {
+                &w.agent_type
+            };
+            let short: String = w.agent_id.chars().take(8).collect();
+            format!("{kind} {short} in {}", session.label())
         }
-        None => w.label(),
+        Some(source) if w.kind == "session" => {
+            format!("{} (copy of {})", w.label(), source.label())
+        }
+        _ => w.label(),
     }
 }
 
@@ -366,6 +371,7 @@ impl Store {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        fill_names(&conn)?;
         Ok(Store { conn })
     }
 
@@ -749,17 +755,24 @@ fn resolve_writer(tx: &Transaction, who: &Identity, place: &Place) -> Result<Wri
         ));
     }
     if let Some(id) = find_writer(tx, &who.session_id, &who.agent_id)? {
+        // A session's name follows a rename: the transcript's latest name wins (#189/a).
+        if who.agent_id.is_empty() && !who.name.is_empty() {
+            tx.execute(
+                "UPDATE writers SET name = ?1 WHERE id = ?2 AND name != ?1",
+                params![who.name, id],
+            )?;
+        }
         return Ok(id);
     }
     if who.agent_id.is_empty() {
         let parent = session_parent(tx, who, place)?;
-        return insert_writer(tx, &who.session_id, "", "", parent, place);
+        return insert_writer(tx, &who.session_id, "", "", parent, place, &who.name);
     }
     let session = match find_writer(tx, &who.session_id, "")? {
         Some(s) => s,
         None => {
             let parent = session_parent(tx, who, place)?;
-            insert_writer(tx, &who.session_id, "", "", parent, place)?
+            insert_writer(tx, &who.session_id, "", "", parent, place, "")?
         }
     };
     insert_writer(
@@ -769,7 +782,27 @@ fn resolve_writer(tx: &Transaction, who: &Identity, place: &Place) -> Result<Wri
         &who.agent_type,
         Some(session),
         place,
+        "",
     )
+}
+
+/// Sessions written before names existed get their made-up name, once, so no session shows as a
+/// hash. Cheap when there is nothing to fill: one query.
+fn fill_names(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let unnamed: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id FROM writers WHERE kind = 'session' AND agent_id = '' AND name = ''",
+        )?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    for (id, session_id) in unnamed {
+        conn.execute(
+            "UPDATE writers SET name = ?1 WHERE id = ?2 AND name = ''",
+            params![made_up_name(&session_id), id],
+        )?;
+    }
+    Ok(())
 }
 
 /// The parent of a session new to the board: the session it was copied from (`/branch`,
@@ -786,10 +819,12 @@ fn session_parent(
     }
     Ok(Some(match find_writer(tx, parent, "")? {
         Some(p) => p,
-        None => insert_writer(tx, parent, "", "", None, place)?,
+        None => insert_writer(tx, parent, "", "", None, place, "")?,
     }))
 }
 
+/// A new writer's row. A session gets `name`, or its made-up name when it has none, so it never
+/// shows as a hash; an agent is named by its type and its session.
 fn insert_writer(
     tx: &Transaction,
     session_id: &str,
@@ -797,18 +832,25 @@ fn insert_writer(
     agent_type: &str,
     parent: Option<WriterId>,
     place: &Place,
+    name: &str,
 ) -> Result<WriterId, WriteError> {
+    let name = match (agent_id.is_empty(), name.is_empty()) {
+        (true, true) => made_up_name(session_id),
+        (true, false) => name.to_string(),
+        (false, _) => String::new(),
+    };
     tx.execute(
         "INSERT INTO writers (kind, session_id, agent_id, agent_type, parent, project, workspace,
-                              created_at)
-         VALUES ('session', ?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                              name, created_at)
+         VALUES ('session', ?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
         params![
             session_id,
             agent_id,
             agent_type,
             parent,
             place.project,
-            place.workspace
+            place.workspace,
+            name
         ],
     )?;
     Ok(tx.last_insert_rowid())

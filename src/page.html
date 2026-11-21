@@ -267,7 +267,7 @@ function renderTree() {
   };
   // Under each writer: its agents, and the sessions copied from it (/branch, /fork), at any depth.
   const childrenOf = (w) => sessions.filter((c) => c.parent === w.id);
-  const sessionNode = (w) => node("writer", w.id, w.agent_id ? w.label.replace(/ in \S+$/, "") : w.label,
+  const sessionNode = (w) => node("writer", w.id, w.agent_id ? (w.agent_type || "agent") + " " + w.agent_id.slice(0, 8) : w.label,
     w.agent_id || w.session_id, clock(w.last_at), childrenOf(w).map(sessionNode));
   const tops = sessions.filter((s) => !s.agent_id && !sessions.some((p) => p.id === s.parent));
   const projects = group(tops, (s) => s.project).map(([project, list]) => {

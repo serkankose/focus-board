@@ -8,9 +8,11 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
-use focus_board::identity::{Identity, Place, fork_parent, is_drive_path, plain_path};
+use focus_board::identity::{
+    Identity, Place, fork_parent, is_drive_path, plain_path, session_name,
+};
 use focus_board::store::{
-    Cell, Field, Filter, ItemId, ItemSummary, NewItem, Store, Writer, label_in,
+    Cell, Field, Filter, ItemId, ItemSummary, NewItem, OWNER, Store, Writer, label_in,
 };
 use focus_board::{db_path, home_dir, hook, server};
 
@@ -107,6 +109,18 @@ enum Cmd {
     Hook(HookCmd),
     /// Print where the board is kept on this machine.
     Where,
+    /// Wait for the owner: ends when the owner has answered the item (or answered again after
+    /// --after VERSION) or closed it, and prints it. Run it in the background, so Claude Code
+    /// wakes you when the owner saves on the page.
+    Wait {
+        item: String,
+        /// The version of the owner's answer you already read; wait for a newer one.
+        #[arg(long, value_name = "VERSION")]
+        after: Option<i64>,
+        /// Give up after this many seconds, with exit 1.
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
+    },
     /// Serve the owner's page on 127.0.0.1 (this machine only).
     Serve {
         /// The port; 0 picks a free one, and the address served is printed.
@@ -184,6 +198,11 @@ fn run(cmd: Cmd) -> Result<(), String> {
         }
         Cmd::History { item, json } => history(&item, json),
         Cmd::Serve { port } => serve(port),
+        Cmd::Wait {
+            item,
+            after,
+            timeout,
+        } => wait(&item, after, timeout),
         Cmd::Where => {
             let path = db_path().ok_or("no FOCUS_BOARD_DB and no data folder on this machine")?;
             println!("{}", path.display());
@@ -238,6 +257,13 @@ fn writer() -> Result<(Identity, Place, Store), String> {
         && let Some(parent) = fork_parent(Path::new(&who.transcript), &who.session_id)
     {
         who.parent_session = parent;
+    }
+    // A session's name, read on every write so it follows a rename (#189/a).
+    if who.agent_id.is_empty()
+        && !who.transcript.is_empty()
+        && let Some(name) = session_name(Path::new(&who.transcript))
+    {
+        who.name = name;
     }
     Ok((who, place, store))
 }
@@ -498,6 +524,34 @@ fn show(item: &str, as_json: bool) -> Result<(), String> {
         println!("feedback   {}: {}", label(&writers, c.writer), line(c));
     }
     Ok(())
+}
+
+/// Polls the board once a second; the board is a local file, so this costs next to nothing.
+fn wait(item: &str, after: Option<i64>, timeout: Option<u64>) -> Result<(), String> {
+    use std::time::{Duration, Instant};
+    let id = parse_item(item)?;
+    let store = open()?;
+    let items = store.items(&Filter::default()).map_err(|e| e.to_string())?;
+    if !items.iter().any(|i| i.id == id) {
+        return Err(format!("no item B{id}"));
+    }
+    let started = Instant::now();
+    loop {
+        let cells = store.current(id).map_err(|e| e.to_string())?;
+        let owner = |field: &str| cells.iter().find(|c| c.writer == OWNER && c.field == field);
+        let answered = owner("answer").map_or(0, |c| c.version);
+        let closed = owner("status").is_some_and(|c| c.value == json!("closed"));
+        if answered > after.unwrap_or(0) || closed {
+            return show(item, false);
+        }
+        if timeout.is_some_and(|t| started.elapsed() >= Duration::from_secs(t)) {
+            return Err(format!(
+                "no answer on B{id} yet, after {} s",
+                started.elapsed().as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
 }
 
 fn add(

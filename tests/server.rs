@@ -377,7 +377,13 @@ fn page_sees_writes_made_past_it() {
         child["parent"], parent["id"],
         "the fork sits under its session"
     );
-    assert_eq!(child["label"], "fork f1 in s1");
+    assert_eq!(
+        child["label"],
+        json!(format!(
+            "fork f1 in {}",
+            focus_board::identity::made_up_name("s1")
+        ))
+    );
     assert!(
         child["last_seq"].as_i64().unwrap() > last,
         "the tree shows when the fork last wrote"

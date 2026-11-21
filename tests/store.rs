@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use focus_board::identity::{Identity, IdentityError, Place, fork_parent};
+use focus_board::identity::{Identity, IdentityError, Place, fork_parent, made_up_name};
 use focus_board::store::{
     Field, Filter, LAYOUT, NewItem, OWNER, OpenError, Store, WriteError, label_in,
 };
@@ -1045,7 +1045,14 @@ fn a_copied_session_files_under_its_parent() {
     let (r, c, a) = (id("root", ""), id("copy", ""), id("copy", "a1"));
     let parent_of = |w: i64| writers.iter().find(|x| x.id == w).unwrap().parent;
     assert_eq!((parent_of(c), parent_of(a)), (Some(r), Some(c)));
-    assert_eq!(label_in(&writers, c), "session copy (copy of root)");
+    assert_eq!(
+        label_in(&writers, c),
+        format!(
+            "{} (copy of {})",
+            made_up_name("copy"),
+            made_up_name("root")
+        )
+    );
 
     let branch = Filter {
         writer: Some(r),
@@ -1126,5 +1133,173 @@ fn an_item_is_filed_where_it_was_raised() {
     assert!(
         !items_in_b.is_empty() && items_in_b.iter().all(|&i| i == second),
         "{items_in_b:?}"
+    );
+}
+
+/// The owner's ask (2026-11-21, "#189/a"): a session shows its name, never a hash. The name is
+/// the last `/rename` title in its transcript, else Claude's last label.
+#[test]
+fn session_names_read_from_the_transcript() {
+    use focus_board::identity::session_name;
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, lines: &[serde_json::Value]| {
+        let path = dir.path().join(name);
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let label = |n: &str| json!({ "type": "agent-name", "agentName": n, "sessionId": "s" });
+    let title = |t: &str| json!({ "type": "custom-title", "customTitle": t, "sessionId": "s" });
+
+    let renamed = write(
+        "renamed.jsonl",
+        &[
+            label("check branch activity"),
+            title("Lens"),
+            title("Lens - da Reviewer"),
+        ],
+    );
+    assert_eq!(
+        session_name(&renamed).as_deref(),
+        Some("Lens - da Reviewer"),
+        "the last title wins"
+    );
+    let labelled = write("labelled.jsonl", &[label("code snippet analysis")]);
+    assert_eq!(
+        session_name(&labelled).as_deref(),
+        Some("code snippet analysis"),
+        "else the label"
+    );
+    let none = write("none.jsonl", &[json!({ "type": "assistant" })]);
+    assert_eq!(session_name(&none), None);
+    let messy = write(
+        "messy.jsonl",
+        &[title(&format!("two\nlines {}", "x".repeat(200)))],
+    );
+    let cleaned = session_name(&messy).unwrap();
+    assert!(
+        !cleaned.contains('\n') && cleaned.chars().count() <= 80,
+        "{cleaned:?}"
+    );
+}
+
+/// A session with no name of its own gets a fixed two-word name made from its id: the same id
+/// gives the same name, and it never looks like a hash.
+#[test]
+fn made_up_names_are_fixed_and_never_hashes() {
+    let one = made_up_name("5d1da7e2-7908-4583-b5a6-56e1b1b8ec86");
+    assert_eq!(one, made_up_name("5d1da7e2-7908-4583-b5a6-56e1b1b8ec86"));
+    let words: Vec<&str> = one.split('-').collect();
+    assert!(
+        words.len() == 2
+            && words
+                .iter()
+                .all(|w| w.chars().all(|c| c.is_ascii_lowercase())),
+        "{one}"
+    );
+    let names: std::collections::HashSet<String> = (0..50)
+        .map(|n| made_up_name(&format!("session-{n}")))
+        .collect();
+    assert!(names.len() > 40, "names spread out: {}", names.len());
+}
+
+/// A session's name follows a rename, an agent's write leaves its session's name alone, and a
+/// writer from before names existed gets its made-up name when the board is opened.
+#[test]
+fn a_session_name_follows_a_rename() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let here = place("p", "p");
+    let named = |n: &str| Identity {
+        session_id: "s".into(),
+        name: n.into(),
+        ..Identity::default()
+    };
+    let item = store
+        .add_item(&named("Smith"), &here, &question("q"))
+        .unwrap();
+    let name_of = |store: &Store| {
+        store
+            .writers()
+            .unwrap()
+            .into_iter()
+            .find(|w| w.session_id == "s" && w.agent_id.is_empty())
+            .unwrap()
+            .name
+    };
+    assert_eq!(name_of(&store), "Smith");
+    store
+        .write_as_session(
+            &named("Smith - the genius coder"),
+            &here,
+            item,
+            Field::Feedback,
+            &feedback("x"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        name_of(&store),
+        "Smith - the genius coder",
+        "a rename is followed"
+    );
+    store
+        .write_as_session(
+            &named(""),
+            &here,
+            item,
+            Field::Feedback,
+            &feedback("y"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        name_of(&store),
+        "Smith - the genius coder",
+        "no name read: the name stays"
+    );
+    let agent = Identity {
+        session_id: "s".into(),
+        agent_id: "a1".into(),
+        agent_type: "fork".into(),
+        name: "Other".into(),
+        ..Identity::default()
+    };
+    store
+        .write_as_session(&agent, &here, item, Field::Feedback, &feedback("z"), None)
+        .unwrap();
+    assert_eq!(
+        name_of(&store),
+        "Smith - the genius coder",
+        "an agent does not rename its session"
+    );
+    let unnamed = session("never-named");
+    store.add_item(&unnamed, &here, &question("q2")).unwrap();
+    let writers = store.writers().unwrap();
+    let w = writers
+        .iter()
+        .find(|w| w.session_id == "never-named")
+        .unwrap();
+    assert_eq!(w.name, made_up_name("never-named"));
+
+    drop(store);
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.execute(
+        "UPDATE writers SET name = '' WHERE session_id = 'never-named'",
+        [],
+    )
+    .unwrap();
+    drop(raw);
+    let store = Store::open(&db).unwrap();
+    let filled = store
+        .writers()
+        .unwrap()
+        .into_iter()
+        .find(|w| w.session_id == "never-named")
+        .unwrap();
+    assert_eq!(
+        filled.name,
+        made_up_name("never-named"),
+        "an old writer gets its name on open"
     );
 }

@@ -23,6 +23,9 @@ pub struct Identity {
     /// The session this one was copied from (`/branch`, `/fork`), when the command has looked it
     /// up for a session new to the board; empty otherwise. See [`fork_parent`].
     pub parent_session: String,
+    /// The session's name from its transcript, when the command has read it; empty otherwise.
+    /// See [`session_name`].
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +87,7 @@ impl Identity {
             agent_type,
             transcript,
             parent_session: String::new(),
+            name: String::new(),
         })
     }
 }
@@ -154,6 +158,74 @@ pub fn fork_parent(transcript: &Path, own: &str) -> Option<String> {
         }
     }
     last_request.or(forked_from).filter(|id| is_plain_id(id))
+}
+
+/// The session's name, read from its Claude Code transcript (owner, 2026-11-21, "#189/a"): the
+/// last title given with `/rename` (`custom-title` lines, `customTitle`), else Claude Code's own
+/// last label (`agent-name` lines, `agentName`). `None` when the transcript has neither. It follows
+/// a rename, since the last line wins. Undocumented fields, seen on Claude Code 2.1.329.
+pub fn session_name(transcript: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(transcript).ok()?;
+    let (mut title, mut label) = (None, None);
+    for bytes in std::io::BufReader::new(file).split(b'\n') {
+        let Ok(bytes) = bytes else { break };
+        let line = String::from_utf8_lossy(&bytes);
+        if !line.contains("\"custom-title\"") && !line.contains("\"agent-name\"") {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let text = |key: &str| entry.get(key).and_then(|v| v.as_str()).map(clean_name);
+        match entry.get("type").and_then(|v| v.as_str()) {
+            Some("custom-title") => title = text("customTitle").filter(|t| !t.is_empty()).or(title),
+            Some("agent-name") => label = text("agentName").filter(|t| !t.is_empty()).or(label),
+            _ => {}
+        }
+    }
+    title.or(label)
+}
+
+/// A name as the board shows it: one line, no control characters, at most 80 characters.
+fn clean_name(raw: &str) -> String {
+    let one_line: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    one_line
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(80)
+        .collect()
+}
+
+/// A fixed two-word name for a session that has no name of its own, made from its id: the same
+/// id always gives the same name, so a session never shows as a hash (owner, 2026-11-21).
+pub fn made_up_name(session_id: &str) -> String {
+    const FIRST: [&str; 32] = [
+        "amber", "brave", "calm", "clever", "coral", "crisp", "dusty", "eager", "fair", "gentle",
+        "golden", "hazel", "honest", "ivory", "jolly", "keen", "lucky", "mellow", "misty", "noble",
+        "olive", "plain", "quiet", "rapid", "rosy", "silver", "sunny", "swift", "tidy", "vivid",
+        "warm", "witty",
+    ];
+    const SECOND: [&str; 32] = [
+        "badger", "bison", "crane", "dolphin", "eagle", "falcon", "ferret", "gecko", "heron",
+        "ibis", "jackal", "koala", "lark", "lemur", "lynx", "marten", "newt", "otter", "owl",
+        "panda", "puffin", "quail", "raven", "robin", "salmon", "seal", "sparrow", "stork",
+        "tapir", "tiger", "walrus", "wren",
+    ];
+    // FNV-1a: small, stable across builds and platforms.
+    let hash = session_id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!(
+        "{}-{}",
+        FIRST[(hash % 32) as usize],
+        SECOND[((hash >> 5) % 32) as usize]
+    )
 }
 
 /// Letters, digits and `_ . : -`, at most 256 of them: what Claude Code's ids are made of.

@@ -106,6 +106,13 @@ check "a bad line ends the scan"     identity.rs store fork_parent_reads_the_tra
 check "Windows path taken as a name" main.rs bin paths_of_any_os 's/arg == "\." \|\| arg\.contains\(\[\x27\/\x27, \x27\\\\\x27\]\) \|\| is_drive_path\(arg\)/arg == "." || arg.contains(\x27\/\x27)/'
 check "folders split on / only"      main.rs bin paths_of_any_os 's/\.rsplit\(\[\x27\/\x27, \x27\\\\\x27\]\)/.rsplit(\x27\/\x27)/'
 check "where ignores the data folder" lib.rs command where_shows_the_board 's/base\.data_dir\(\)\.join/base.home_dir().join/'
+check "the label beats the title"    identity.rs store session_names_read_from_the_transcript 's/title\.or\(label\)/label.or(title)/'
+check "the first title wins"         identity.rs store session_names_read_from_the_transcript 's/title = text\("customTitle"\)\.filter\(\|t\| !t\.is_empty\(\)\)\.or\(title\)/title = title.or(text("customTitle").filter(|t| !t.is_empty()))/'
+check "sessions show as hashes"      store.rs store a_session_name_follows_a_rename 's/\(true, true\) => made_up_name\(session_id\),/(true, true) => String::new(),/'
+check "a rename is not followed"     store.rs store a_session_name_follows_a_rename 's/if who\.agent_id\.is_empty\(\) && !who\.name\.is_empty\(\) \{/if false {/'
+check "old writers stay unnamed"     store.rs store a_session_name_follows_a_rename 's/fill_names\(&conn\)\?;//'
+check "names not read on write"      main.rs command a_session_shows_its_rename_title 's/who\.name = name;/let _ = name;/'
+check "wait ignores the answer"      main.rs command wait_ends_when_the_owner_answers 's/if answered > after\.unwrap_or\(0\) \|\| closed \{/if closed {/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
 cp -r .pristine/src/. src/

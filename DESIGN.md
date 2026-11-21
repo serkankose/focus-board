@@ -125,8 +125,21 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
     `--git-common-dir`, so all worktrees of one repo share a project.
   - When there is no repo, or the top level is the home folder (which is itself a repo here), the
     project and workspace are the working directory itself.
-- **Name.** No name has been seen in a session's shell or hook input. `focus-board whoami
-  --name Smith` sets the writer's name label. The name is a label; the id is the key.
+- **Name** (owner, 2026-11-21, "#189/a": "each session should have a permanent name", never a
+  hash).
+  - A session shows the last title it was given with `/rename` (`custom-title` lines in its
+    transcript, `customTitle`), else Claude Code's last label (`agent-name`, `agentName`), else a
+    fixed two-word name made from its id (`identity::made_up_name`, like `plain-crane`).
+  - The command reads it on every write, so the name follows a rename. An agent is shown as
+    `type id in <its session's name>`. Writers from before names existed get their made-up name
+    when the board is opened. `whoami --name` still sets a name until the next title is read.
+  - The name is a label; the id is the key.
+- **Waiting** (owner, 2026-11-21, "#192/a").
+  - `focus-board wait B<n>` polls the board once a second and ends when the owner answers (or,
+    with `--after V`, answers again past version V) or closes the item. It then prints the item.
+  - The skill tells a session to run it in the background after raising an item, so Claude Code
+    wakes the session when the owner saves on the page. No hook is involved.
+  - It only wakes a session that is still open.
 
 ## The command
 
@@ -196,12 +209,14 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(review R6)* A shared folder name does not mix projects | `a_shared_folder_name_does_not_mix_projects` |
 | *(review R8)* The timeline is cut and says so; active items on the server | `timeline_is_cut_and_says_so`, `timeline_cut_and_active_filter` |
 | *(review R10, R11, G8)* Repeated letters, a newer layout, the author-only question | `a_repeated_option_letter_is_refused`, `a_newer_layout_is_refused`, `only_the_author_writes_the_question` |
-| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 13 checks in headless Firefox |
+| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 14 checks in headless Firefox |
 | *(owner's ask)* Each item keeps where it was raised: repo, worktree, branch, path | `item_context_is_recorded_at_raise_time`, the branch asserts in `projects_and_worktrees_stay_apart`, and the page check "each item shows its repo, worktree, branch and full path" |
 | A board from before layout versions is refused | `an_unversioned_board_is_refused` |
 | *(review R3)* A copied session finds its parent and sits under it | `fork_parent_reads_the_transcript`, `a_copied_session_files_under_its_parent`, `a_copied_session_writes_under_its_parent` (the binary, through the hook), and the page check "a copied session sits under the session it was copied from" |
 | *(review X1)* An item is filed where it was raised | `an_item_is_filed_where_it_was_raised` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 51 checks |
+| *(owner's ask)* Sessions have names, never hashes; they follow a rename | `session_names_read_from_the_transcript`, `made_up_names_are_fixed_and_never_hashes`, `a_session_name_follows_a_rename`, `a_session_shows_its_rename_title` (through the hook), and the page check "no session shows as a hash" |
+| *(owner's ask)* `wait` ends when the owner answers | `wait_ends_when_the_owner_answers`, `wait_returns_at_once_or_times_out` |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 58 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

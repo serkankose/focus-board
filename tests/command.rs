@@ -4,6 +4,7 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
+use focus_board::identity::made_up_name;
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_focus-board");
@@ -252,7 +253,8 @@ fn hook_rewrites_only_board_calls() {
     assert!(out.status.success(), "{}", stderr(&out));
     let whoami = String::from_utf8(out.stdout).unwrap();
     assert!(
-        whoami.contains("fork ag-7 in sess-1") && whoami.contains("under      session sess-1"),
+        whoami.contains(&format!("fork ag-7 in {}", made_up_name("sess-1")))
+            && whoami.contains(&format!("under      {}", made_up_name("sess-1"))),
         "{whoami}"
     );
     let item = board.json(&["show", "B1", "--json"]);
@@ -262,7 +264,10 @@ fn hook_rewrites_only_board_calls() {
         .iter()
         .find(|c| c["field"] == "feedback")
         .unwrap();
-    assert_eq!(fork_cell["writer"], "fork ag-7 in sess-1");
+    assert_eq!(
+        fork_cell["writer"],
+        Value::String(format!("fork ag-7 in {}", made_up_name("sess-1")))
+    );
 }
 
 /// The command end to end: raise, give feedback with a version, close, list by project and
@@ -334,12 +339,9 @@ fn command_round_trip() {
     assert_eq!(
         feedback,
         vec![
+            ("Smith".to_string(), serde_json::json!({ "text": "first" })),
             (
-                "Smith (session sess-1)".to_string(),
-                serde_json::json!({ "text": "first" })
-            ),
-            (
-                "fork f1 in sess-1".to_string(),
+                "fork f1 in Smith".to_string(),
                 serde_json::json!({ "pick": "b" })
             ),
         ]
@@ -478,8 +480,11 @@ fn a_copied_session_writes_under_its_parent() {
     assert!(out.status.success(), "{}", stderr(&out));
     let whoami = String::from_utf8(out.stdout).unwrap();
     assert!(
-        whoami.contains("writes as  session sess-cop (copy of sess-roo)")
-            && whoami.contains("under      session sess-roo"),
+        whoami.contains(&format!(
+            "writes as  {} (copy of {})",
+            made_up_name("sess-copy"),
+            made_up_name("sess-root")
+        )) && whoami.contains(&format!("under      {}", made_up_name("sess-root"))),
         "{whoami}"
     );
 
@@ -512,4 +517,119 @@ fn where_shows_the_board() {
         shown.trim(),
         data.join("focus-board/board.sqlite").to_str().unwrap()
     );
+}
+
+/// The owner's ask (2026-11-21, "#192/a"): a session can wait for the owner. `wait` ends as soon
+/// as the owner answers on the page, and prints the answer; Claude Code then wakes the session.
+#[test]
+fn wait_ends_when_the_owner_answers() {
+    let board = Board::new();
+    board.ok(S, &["add", "q?", "-o", "a=yes", "-o", "b=no"]);
+    let mut child = board
+        .command(None, "work")
+        .args(["wait", "B1", "--timeout", "20"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "wait ended before any answer"
+    );
+    let started = std::time::Instant::now();
+    focus_board::store::Store::open(&board.dir.path().join("board.sqlite"))
+        .unwrap()
+        .owner_answer(1, &serde_json::json!({ "pick": "a", "text": "go" }), None)
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        started.elapsed().as_secs() < 5,
+        "wait took {:?} to notice",
+        started.elapsed()
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("answer     a: go"), "{text}");
+}
+
+/// `wait` returns at once when the owner has already answered, waits past a version it was told
+/// it had read, gives up after `--timeout`, and refuses an item that does not exist.
+#[test]
+fn wait_returns_at_once_or_times_out() {
+    let board = Board::new();
+    board.ok(S, &["add", "q?", "-o", "a=yes"]);
+    focus_board::store::Store::open(&board.dir.path().join("board.sqlite"))
+        .unwrap()
+        .owner_answer(1, &serde_json::json!({ "pick": "a" }), None)
+        .unwrap();
+    let started = std::time::Instant::now();
+    assert!(board.ok(None, &["wait", "B1"]).contains("answer     a"));
+    assert!(
+        started.elapsed().as_secs() < 3,
+        "an answered item must not wait"
+    );
+    let later = board.run(None, &["wait", "B1", "--after", "1", "--timeout", "2"]);
+    assert_eq!(later.status.code(), Some(1));
+    assert!(
+        stderr(&later).contains("no answer on B1 yet"),
+        "{}",
+        stderr(&later)
+    );
+    assert_eq!(board.run(None, &["wait", "B9"]).status.code(), Some(1));
+}
+
+/// Names end to end: through the hook, a session shows the title it was given with /rename, and
+/// follows a later rename on its next write.
+#[test]
+fn a_session_shows_its_rename_title() {
+    let board = Board::new();
+    let transcript = board.dir.path().join("named.jsonl");
+    let title = |t: &str| serde_json::json!({ "type": "custom-title", "customTitle": t, "sessionId": "sess-n" });
+    std::fs::write(
+        &transcript,
+        format!("{}\n", title("Smith - the genius coder")),
+    )
+    .unwrap();
+    let run = |command: String| {
+        let mut input: Value = serde_json::from_str(&bash_input("sess-n", None, &command)).unwrap();
+        input["transcript_path"] = Value::String(transcript.to_str().unwrap().to_string());
+        let reply: Value = serde_json::from_slice(&hook(&input.to_string()).stdout).unwrap();
+        let rewritten = reply["hookSpecificOutput"]["updatedInput"]["command"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let out = Command::new("bash")
+            .arg("-c")
+            .arg(&rewritten)
+            .current_dir(board.dir.path().join("work"))
+            .env("FOCUS_BOARD_DB", board.dir.path().join("board.sqlite"))
+            .env("HOME", board.dir.path())
+            .env_remove("FOCUS_BOARD_SESSION")
+            .env_remove("FOCUS_BOARD_AGENT")
+            .env_remove("FOCUS_BOARD_AGENT_TYPE")
+            .env_remove("FOCUS_BOARD_TRANSCRIPT")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let first = run(format!("{BIN} add 'q?' && {BIN} whoami"));
+    assert!(
+        first.contains("writes as  Smith - the genius coder"),
+        "{first}"
+    );
+    std::fs::write(
+        &transcript,
+        format!(
+            "{}\n{}\n",
+            title("Smith - the genius coder"),
+            title("Stormy")
+        ),
+    )
+    .unwrap();
+    let second = run(format!("{BIN} feedback B1 'renamed' && {BIN} whoami"));
+    assert!(second.contains("writes as  Stormy"), "{second}");
+    let listed = board.ok(None, &["list"]);
+    assert!(listed.contains("(Stormy ·"), "{listed}");
 }

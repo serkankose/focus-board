@@ -175,11 +175,15 @@ try:
     m.shot(os.path.join(out, "page-2-answered-and-refused.png"))
 
     under = m.js("""const copy = [...document.querySelectorAll('nav button.node')]
-            .find(b => b.innerText.startsWith('session alice-cp'));
+            .find(b => b.innerText.includes('(copy of Smith)'));
         const li = copy && copy.closest('ul').closest('li');
         return li ? li.querySelector('button.node').innerText : null;""")
     check("a copied session sits under the session it was copied from",
           bool(under) and under.startswith("Smith"), str(under))
+    hashes = m.js("""return [...document.querySelectorAll('nav button.node')]
+        .map(b => b.innerText.split(' ·')[0])
+        .filter(t => /^session [0-9a-z-]{8}$/.test(t));""")
+    check("no session shows as a hash", not hashes, ", ".join(hashes) or "none")
 
     labels = m.js("return [...document.querySelectorAll('nav button.node')].map(b => b.innerText.split(' ·')[0])")
     check("a project with one workspace has no workspace level; one with two has it",
