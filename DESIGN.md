@@ -235,7 +235,10 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
      hand-set one.
    - systemd opens the log file before it would create a `StateDirectory=`, so the first start
      failed with `209/STDOUT`. The install script creates the folder.
-   - **Still open:** the run in a session that is not in auto mode.
+   - **A session not in auto mode** (V, the owner, 2026-11-21): `focus-board list` asked for
+     permission, and the prompt showed the plain command, not the hook's `export …` prefix. So the
+     rewrite does not change what the owner is asked. Not yet seen: whether an allow rule such as
+     `Bash(focus-board:*)` matches, which would stop the asking.
 
 ## Platforms
 
