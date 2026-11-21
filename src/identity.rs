@@ -88,11 +88,32 @@ impl Identity {
     }
 }
 
-/// An absolute path with no quote and no control character: safe inside single quotes.
+/// An absolute path, POSIX (`/…`) or Windows (`C:\…`, `C:/…`), with no quote and no control
+/// character: safe inside the hook's single quotes. On Windows the hook's prefix runs in Git Bash,
+/// where a backslash inside single quotes is a plain character (review P9).
 pub fn is_safe_path(path: &str) -> bool {
-    path.starts_with('/')
+    (path.starts_with('/') || is_drive_path(path))
         && path.len() <= 4096
         && !path.chars().any(|c| c == '\'' || c.is_control())
+}
+
+/// A Windows path that starts with a drive: `C:\…` or `C:/…`.
+pub fn is_drive_path(path: &str) -> bool {
+    let b = path.as_bytes();
+    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
+}
+
+/// The usual form of a path. Windows' canonical paths start with `\\?\` (`\\?\C:\…`,
+/// `\\?\UNC\server\share\…`), while git and people write them without it; dropping it keeps one
+/// form of each path, so a project cannot appear twice (review P8). Other paths pass unchanged.
+pub fn plain_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match path.strip_prefix(r"\\?\") {
+        Some(rest) if is_drive_path(rest) => rest.to_string(),
+        _ => path.to_string(),
+    }
 }
 
 /// The session a copied session (`/branch`, `/fork`, `--fork-session`) was copied from, read
@@ -108,8 +129,10 @@ pub fn fork_parent(transcript: &Path, own: &str) -> Option<String> {
     use std::io::BufRead;
     let file = std::fs::File::open(transcript).ok()?;
     let (mut last_request, mut forked_from) = (None, None);
-    for line in std::io::BufReader::new(file).lines() {
-        let Ok(line) = line else { break };
+    // Raw lines: one that is not UTF-8 is skipped, not taken as the end (review C3).
+    for bytes in std::io::BufReader::new(file).split(b'\n') {
+        let Ok(bytes) = bytes else { break };
+        let line = String::from_utf8_lossy(&bytes);
         if !line.contains("\"requestSessionId\"") && !line.contains("\"forkedFrom\"") {
             continue;
         }
@@ -215,7 +238,8 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn canonical(p: &Path) -> PathBuf {
-    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+    let full = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    PathBuf::from(plain_path(&full.to_string_lossy()))
 }
 
 fn shown(p: &Path) -> String {

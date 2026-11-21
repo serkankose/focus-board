@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
-use focus_board::identity::{Identity, Place, fork_parent};
+use focus_board::identity::{Identity, Place, fork_parent, is_drive_path, plain_path};
 use focus_board::store::{
     Cell, Field, Filter, ItemId, ItemSummary, NewItem, Store, Writer, label_in,
 };
@@ -105,6 +105,8 @@ enum Cmd {
     /// Entry points for Claude Code hooks.
     #[command(subcommand)]
     Hook(HookCmd),
+    /// Print where the board is kept on this machine.
+    Where,
     /// Serve the owner's page on 127.0.0.1 (this machine only).
     Serve {
         /// The port; 0 picks a free one, and the address served is printed.
@@ -182,6 +184,11 @@ fn run(cmd: Cmd) -> Result<(), String> {
         }
         Cmd::History { item, json } => history(&item, json),
         Cmd::Serve { port } => serve(port),
+        Cmd::Where => {
+            let path = db_path().ok_or("no FOCUS_BOARD_DB and no data folder on this machine")?;
+            println!("{}", path.display());
+            Ok(())
+        }
     }
 }
 
@@ -241,11 +248,19 @@ fn parse_item(s: &str) -> Result<ItemId, String> {
         .map_err(|_| format!("{s:?} is not an item id such as B12"))
 }
 
+/// The last folder of a path, on any OS: both separators count (review P2).
 fn folder(path: &str) -> &str {
-    Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|f| !f.is_empty())
         .unwrap_or(path)
+}
+
+/// Whether a `--project` argument is a path rather than a folder name: it has a separator, is
+/// `.`, or starts with a Windows drive (review P4).
+fn looks_like_path(arg: &str) -> bool {
+    arg == "." || arg.contains(['/', '\\']) || is_drive_path(arg)
 }
 
 fn label(writers: &[Writer], id: i64) -> String {
@@ -366,9 +381,9 @@ fn list(
     let mut items = store.items(&Filter::default()).map_err(|e| e.to_string())?;
     if !everywhere {
         let wanted = match project {
-            Some(p) if p.contains('/') || p == "." => Path::new(&p)
+            Some(p) if looks_like_path(&p) => Path::new(&p)
                 .canonicalize()
-                .map(|c| c.to_string_lossy().into_owned())
+                .map(|c| plain_path(&c.to_string_lossy()))
                 .unwrap_or(p),
             Some(name) => one_project_named(&items, &name)?,
             None => here()?.project,
@@ -570,4 +585,23 @@ fn history(item: &str, as_json: bool) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths_of_any_os() {
+        assert_eq!(folder("/home/me/dev/board"), "board");
+        assert_eq!(folder("C:\\Users\\me\\dev\\board"), "board");
+        assert_eq!(folder("C:/Users/me/board/"), "board");
+        assert_eq!(folder("board"), "board");
+        for path in [".", "/x/y", "C:\\Users\\me", "C:/Users", "sub\\dir", "../x"] {
+            assert!(looks_like_path(path), "{path}");
+        }
+        for name in ["board", "focus-board", "C"] {
+            assert!(!looks_like_path(name), "{name}");
+        }
+    }
 }

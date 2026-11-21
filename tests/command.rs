@@ -31,6 +31,9 @@ impl Board {
             .env_remove("FOCUS_BOARD_SESSION")
             .env_remove("FOCUS_BOARD_AGENT")
             .env_remove("FOCUS_BOARD_AGENT_TYPE")
+            // A test run from a hooked session inherits the session's transcript; a test board
+            // must never read it.
+            .env_remove("FOCUS_BOARD_TRANSCRIPT")
             // Every session's shell has this; it must never count as an identity.
             .env("CLAUDE_CODE_SESSION_ID", "shell-session-id");
         if let Some((session, agent, agent_type)) = who {
@@ -243,6 +246,7 @@ fn hook_rewrites_only_board_calls() {
         .env_remove("FOCUS_BOARD_SESSION")
         .env_remove("FOCUS_BOARD_AGENT")
         .env_remove("FOCUS_BOARD_AGENT_TYPE")
+        .env_remove("FOCUS_BOARD_TRANSCRIPT")
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
@@ -485,4 +489,27 @@ fn a_copied_session_writes_under_its_parent() {
         .as_str()
         .unwrap();
     assert!(command.contains("FOCUS_BOARD_TRANSCRIPT=''"), "{command}");
+}
+
+/// Review P1: `where` prints where the board is kept: `FOCUS_BOARD_DB` when set, else a
+/// `focus-board` folder in the OS's data folder (on Linux, `$XDG_DATA_HOME`).
+#[test]
+fn where_shows_the_board() {
+    let board = Board::new();
+    let given = board.run(None, &["where"]);
+    let path = String::from_utf8(given.stdout).unwrap();
+    assert!(path.trim().ends_with("/board.sqlite"), "{path}");
+    let data = board.dir.path().join("data");
+    let out = board
+        .command(None, "work")
+        .env_remove("FOCUS_BOARD_DB")
+        .env("XDG_DATA_HOME", &data)
+        .arg("where")
+        .output()
+        .unwrap();
+    let shown = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        shown.trim(),
+        data.join("focus-board/board.sqlite").to_str().unwrap()
+    );
 }

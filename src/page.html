@@ -145,7 +145,8 @@ async function postJSON(path, data) {
   return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
 }
 
-const folder = (path) => (path || "").split("/").filter(Boolean).pop() || path || "";
+// The last folder of a path, on any OS: both separators count.
+const folder = (path) => (path || "").split(/[\\/]/).filter(Boolean).pop() || path || "";
 function clock(iso) {
   if (!iso) return "";
   const d = new Date(iso);

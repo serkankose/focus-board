@@ -32,7 +32,10 @@ check() {
     if ! cargo build -q --tests 2>/dev/null; then
         echo "NO BUILD      $name"; status=1; return
     fi
-    if cargo test -q --test "$tfile" "$tname" >/dev/null 2>&1; then
+    local target=(--test "$tfile")
+    [ "$tfile" = lib ] && target=(--lib)
+    [ "$tfile" = bin ] && target=(--bin focus-board)
+    if cargo test -q "${target[@]}" "$tname" >/dev/null 2>&1; then
         echo "STILL PASSES  $name   ($tfile::$tname)"; status=1
     else
         echo "fails (good)  $name   ($tfile::$tname)"
@@ -96,6 +99,13 @@ check "parent is the chain's root"   identity.rs store fork_parent_reads_the_tra
 check "command skips the lookup"     main.rs command a_copied_session_writes_under_its_parent 's/who\.parent_session = parent;/let _ = parent;/'
 check "transcript hand-set allowed"  hook.rs command hook_denies_a_hand_set_identity 's/\[SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR, TRANSCRIPT_VAR\]/[SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR]/'
 check "item filed at its writer's place" store.rs store an_item_is_filed_where_it_was_raised 's/AND \(\?3 IS NULL OR i\.workspace = \?3\)/AND (?3 IS NULL OR a.workspace = ?3)/; s/AND \(\?2 IS NULL OR i\.workspace = \?2\)/AND (?2 IS NULL OR a.workspace = ?2)/'
+check "Windows board name missed"    hook.rs lib runs_board_finds_the_command_word_only 's/lower == "focus-board" \|\| lower == "focus-board\.exe"/lower == "focus-board"/'
+check "drive path taken as unsafe"   identity.rs store windows_paths_are_understood 's/\(path\.starts_with\(\x27\/\x27\) \|\| is_drive_path\(path\)\)/path.starts_with(\x27\/\x27)/'
+check "\\\\?\\ prefix kept"          identity.rs store windows_paths_are_understood 's/Some\(rest\) if is_drive_path\(rest\) => rest\.to_string\(\),/Some(rest) if false \&\& is_drive_path(rest) => rest.to_string(),/'
+check "a bad line ends the scan"     identity.rs store fork_parent_reads_the_transcript 's/let line = String::from_utf8_lossy\(&bytes\);/let Ok(line) = String::from_utf8(bytes) else { break };/'
+check "Windows path taken as a name" main.rs bin paths_of_any_os 's/arg == "\." \|\| arg\.contains\(\[\x27\/\x27, \x27\\\\\x27\]\) \|\| is_drive_path\(arg\)/arg == "." || arg.contains(\x27\/\x27)/'
+check "folders split on / only"      main.rs bin paths_of_any_os 's/\.rsplit\(\[\x27\/\x27, \x27\\\\\x27\]\)/.rsplit(\x27\/\x27)/'
+check "where ignores the data folder" lib.rs command where_shows_the_board 's/base\.data_dir\(\)\.join/base.home_dir().join/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
 cp -r .pristine/src/. src/

@@ -101,10 +101,17 @@ pub fn runs_board(command: &str) -> bool {
                     words.next();
                     continue;
                 }
-                return word.rsplit('/').next() == Some("focus-board");
+                return is_board_name(word);
             }
             false
         })
+}
+
+/// `focus-board` by name or path, on any OS: `/…/focus-board`, `C:\…\focus-board.exe` (review P3).
+fn is_board_name(word: &str) -> bool {
+    let name = word.rsplit(['/', '\\']).next().unwrap_or(word);
+    let lower = name.to_ascii_lowercase();
+    lower == "focus-board" || lower == "focus-board.exe"
 }
 
 /// Whether a shell command assigns one of the identity variables itself (`NAME=`, `NAME+=`, in
@@ -155,6 +162,11 @@ mod tests {
             "if focus-board list; then echo ok; fi",
             "! focus-board add q",
             "while true; do focus-board list; done",
+            // Windows (review P3).
+            r"C:\tools\focus-board.exe list",
+            "focus-board.exe list",
+            r".\focus-board.EXE whoami",
+            "C:/Users/me/.cargo/bin/focus-board.exe show B1",
         ] {
             assert!(runs_board(yes), "should match: {yes}");
         }
@@ -165,6 +177,8 @@ mod tests {
             "echo focus-board",
             "focus-boarding",
             "timeout 5 sleep 1",
+            "focus-boards.exe list",
+            r"dir C:\focus-board.exe\notes",
             "",
         ] {
             assert!(!runs_board(no), "should not match: {no}");

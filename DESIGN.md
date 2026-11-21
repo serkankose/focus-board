@@ -114,6 +114,11 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   - The command reads the transcript only on a session's first write (`identity::fork_parent`).
     The store then files the copy under its parent, creating the parent's row if it never wrote.
     Labels say "(copy of …)". A tree node's filter covers its whole branch, at any depth.
+  - A line that is not UTF-8 is skipped rather than ending the read (review C3). Only top-level
+    fields count, so text inside a turn cannot name a parent (review C1).
+  - `unverified` (review C4): if `--resume` ever gave an old session a new id and copied its turns
+    with `requestSessionId`, the resumed session would be filed as a copy of its earlier self. That
+    reads right, since it continues that session.
 - **Project and workspace** come from the command's working directory at the writer's first write,
   and stay fixed after that, so a later `cd` does not move a writer.
   - Workspace: `git rev-parse --show-toplevel`. Project: the main checkout, from
@@ -196,7 +201,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A board from before layout versions is refused | `an_unversioned_board_is_refused` |
 | *(review R3)* A copied session finds its parent and sits under it | `fork_parent_reads_the_transcript`, `a_copied_session_files_under_its_parent`, `a_copied_session_writes_under_its_parent` (the binary, through the hook), and the page check "a copied session sits under the session it was copied from" |
 | *(review X1)* An item is filed where it was raised | `an_item_is_filed_where_it_was_raised` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 44 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 51 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next
@@ -229,7 +234,7 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
 
 **Linux, Windows and macOS: the code now, the installs later** (owner, 2026-11-21: "#122/a", sent
 right after "#122/b"; the later one stands). Review 04 listed what a port touches.
-- **To build next, tested with Windows-style paths on Linux:**
+- **Built in the code, tested with Windows-style paths on Linux** (`windows_paths_are_understood`, `paths_of_any_os`, `where_shows_the_board`, the hook's Windows names):
   - P1: one data folder per OS;
   - P2: the page splits paths on both separators;
   - P3: `runs_board` takes `focus-board.exe` and `\`;

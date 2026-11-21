@@ -939,6 +939,63 @@ fn fork_parent_reads_the_transcript() {
         None,
         "an id with characters ids never have"
     );
+
+    // Review C3: a line that is not UTF-8 is skipped, not taken as the end of the transcript.
+    let mixed = dir.path().join("mixed.jsonl");
+    let mut bytes = format!(
+        "{}\n",
+        json!({ "type": "assistant", "requestSessionId": "root" })
+    )
+    .into_bytes();
+    bytes.extend_from_slice(b"{\"type\":\"assistant\",\"text\":\"\xff\xfe broken\"}\n");
+    bytes.extend_from_slice(
+        format!(
+            "{}\n",
+            json!({ "type": "assistant", "requestSessionId": "br" })
+        )
+        .as_bytes(),
+    );
+    std::fs::write(&mixed, bytes).unwrap();
+    assert_eq!(
+        fork_parent(&mixed, "cp").as_deref(),
+        Some("br"),
+        "read past a line that is not UTF-8"
+    );
+}
+
+/// Review P8, P9: Windows paths are understood on any OS. A drive path is safe in the hook's
+/// quotes, and Windows' `\\?\` form of a canonical path is written without the prefix.
+#[test]
+fn windows_paths_are_understood() {
+    use focus_board::identity::{is_drive_path, is_safe_path, plain_path};
+    for safe in [
+        "/home/me/.claude/projects/p/s.jsonl",
+        r"C:\Users\me\.claude\projects\p\s.jsonl",
+        "C:/Users/me/s.jsonl",
+    ] {
+        assert!(is_safe_path(safe), "{safe}");
+    }
+    for unsafe_path in [
+        r"relative\s.jsonl",
+        r"C:\it's.jsonl",
+        "C:",
+        "s.jsonl",
+        "/tmp/a\nb",
+    ] {
+        assert!(!is_safe_path(unsafe_path), "{unsafe_path:?}");
+    }
+    assert!(is_drive_path(r"d:\x") && !is_drive_path(r"\\server\share"));
+    assert_eq!(plain_path(r"\\?\C:\Users\me\board"), r"C:\Users\me\board");
+    assert_eq!(
+        plain_path(r"\\?\UNC\server\share\board"),
+        r"\\server\share\board"
+    );
+    assert_eq!(plain_path("/home/me/board"), "/home/me/board");
+    assert_eq!(
+        plain_path(r"\\?\Volume{x}\board"),
+        r"\\?\Volume{x}\board",
+        "only drive and UNC forms"
+    );
 }
 
 /// Brief: "A fork writes as itself ... labelled with the session it was forked from" and "shows

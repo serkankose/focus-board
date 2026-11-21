@@ -9,6 +9,9 @@ set -uo pipefail
 bin=$1
 dir=$2
 export FOCUS_BOARD_DB=$dir/board.sqlite
+# Run from a hooked session, this script inherits that session's transcript; the demo's writers
+# must not read it. The copied session below sets its own.
+unset FOCUS_BOARD_TRANSCRIPT
 as() { # as SESSION AGENT AGENT_TYPE -- focus-board arguments...
     local session=$1 agent=$2 kind=$3
     shift 3

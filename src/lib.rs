@@ -11,21 +11,22 @@ pub mod store;
 
 use std::path::PathBuf;
 
-/// The board's database: `FOCUS_BOARD_DB`, else `$XDG_DATA_HOME/focus-board/board.sqlite`, else
-/// `~/.local/share/focus-board/board.sqlite`. Always outside the source tree.
+/// The board's database: `FOCUS_BOARD_DB`, else `board.sqlite` in a `focus-board` folder in the
+/// OS's data folder (review P1): `$XDG_DATA_HOME` or `~/.local/share` on Linux,
+/// `~/Library/Application Support` on macOS, `%APPDATA%` on Windows. Always outside the source tree.
 pub fn db_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("FOCUS_BOARD_DB").filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
     }
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .filter(|p| !p.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home_dir().map(|h| h.join(".local/share")))?;
-    Some(data.join("focus-board").join("board.sqlite"))
+    let base = directories::BaseDirs::new()?;
+    Some(base.data_dir().join("focus-board").join("board.sqlite"))
 }
 
+/// The home folder: `HOME` where set (Linux, macOS, Git Bash on Windows), else the OS's own
+/// (`%USERPROFILE%` on Windows).
 pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from)
+        .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
 }
