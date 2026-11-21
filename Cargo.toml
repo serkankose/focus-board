@@ -1,0 +1,13 @@
+[package]
+name = "focus-board"
+version = "0.1.0"
+edition = "2024"
+description = "A shared board of open questions: the owner answers on a page, sessions write through a command."
+publish = false
+
+[dependencies]
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

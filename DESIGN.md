@@ -125,6 +125,8 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   - **Tree**: project, workspace, session, then its forks and subagents. Picking a node narrows the
     table and timeline to that branch.
   - **Timeline**: the `cells` rows in row-id order, each naming its writer and its place in the tree.
+    A node's timeline holds every write on the items raised in that branch, the owner's answers
+    included, plus the branch's own writes on other items.
 
 ## Tests — the brief's nine, and two more
 
@@ -132,15 +134,22 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
 |---|---|
 | Two writers, different columns, same row, same moment: both survive | `concurrent_writers_both_land` (two connections, two threads, barrier-started) |
 | A stale version is refused; the cell keeps the newer value | `stale_version_refused` |
-| The command refuses the owner's column | `cli_refuses_answer` (runs the binary) |
+| The command refuses the owner's column | `cli_refuses_answer` (step 3, runs the binary); the store's guard: `session_cannot_write_the_owners_column` |
 | A fork and its parent each keep their own cell | `fork_and_parent_own_cells` |
 | Two projects, two workspaces of one: never mix | `projects_and_worktrees_stay_apart`, also covering the home-folder case |
 | A new session writes at once, no setup | `first_write_creates_writer` |
 | A fork shows under its parent; timeline interleaves | `fork_in_tree_and_timeline_order` |
 | Every version survives many edits | `all_versions_kept` (1000 edits) and `update_and_delete_refused` (triggers) |
 | Foreign `Origin`, foreign `Host`, or no header: refused | `server_guards` (writes and reads) |
-| *(added)* No identity, no write | `unidentified_write_refused`, also with only `CLAUDE_CODE_SESSION_ID` set |
-| *(added)* The hook rewrites only `focus-board` commands | `hook_rewrites_only_board_calls` |
+| *(added)* No identity, no write | `unidentified_write_refused`, also with only `CLAUDE_CODE_SESSION_ID` set (the command's own refusal: step 3) |
+| *(added)* The hook rewrites only `focus-board` commands | `hook_rewrites_only_board_calls` (step 3) |
+| *(added)* Values fit their field | `values_are_checked` |
+| *(added)* Status: the last written of the author's and the owner's | `status_is_the_last_written_of_author_and_owner` |
+| *(added)* The owner never writes from the command, a session never from the page | `writer_and_client_must_match` (unit test in `src/store.rs`) |
+
+`update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
+row without firing delete triggers, so insert triggers refuse them: a cell only gains its next
+version, and no row id or writer identity is ever taken over.
 
 The tests drive the board with the identity variables set directly. Those tests prove the board's
 logic, not that Claude Code's hook delivers the ids. That part is checked once in the spike below.

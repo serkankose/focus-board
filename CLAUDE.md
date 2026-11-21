@@ -23,7 +23,9 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 
 ## Status (2026-11-21)
 
-- `BRIEF.md` only. No code yet.
+- Build step 2 of `DESIGN.md` is done: the store (`src/store.rs`), identity and place
+  (`src/identity.rs`), and their tests (`tests/store.rs`). No command, server or page yet.
+- **Test:** `cargo test`. Lint: `cargo clippy --all-targets`, `cargo fmt --check`.
 - **Stack: Rust and SQLite, one program** (owner, 2026-11-21). The server serves the page; the
   command opens the database directly, each write in its own transaction.
   - Considered and dropped: PostgreSQL (a service to run), append-only files (version checks need
