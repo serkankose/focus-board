@@ -100,6 +100,8 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - **The board's data lives outside the source tree**, for example under the XDG data directory or
   a path set by an environment variable. The same goes for generated files.
 - Read before editing. Run it, or it isn't done. A fix ships with the test that would have caught it.
-- **Commits** (owner, 2026-11-21): commit each build step on its own branch, without asking, once
-  its tests and its break-it checks (each rule's test fails with the rule removed) are green.
-  Ask before merging anything into `master`, which takes the branches by squash or cherry-pick.
+- **Commits and merges** (owner, 2026-11-21): commit each change on its own branch once its
+  tests and its break-it checks (each rule's test fails with the rule removed) are green. Then
+  merge it into `master` (fast-forward, squash or cherry-pick) and reinstall with
+  `install/linux.sh`, **without asking** ("#207/a"). Say what went live. Settings outside this
+  repo, such as the owner's global Claude Code settings or skills, still need the owner's word.
