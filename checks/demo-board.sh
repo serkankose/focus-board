@@ -26,15 +26,22 @@ g "$dir/alpha" init -q && g "$dir/alpha" commit -q --allow-empty -m demo &&
     g "$dir/alpha" worktree add -q -b feature "$dir/alpha-feature" ||
     { echo "git setup failed"; exit 1; }
 cd "$dir/alpha" || exit 1
-as demo-session-a "" "" add "Keep SQLite, or store the board another way?" \
+as alice-01 "" "" add "Keep SQLite, or store the board another way?" \
     -o a="keep SQLite" -o b="PostgreSQL" -o c="append-only files" --recommend a --label "#15"
-as demo-session-a "" "" whoami --name Smith
-as demo-session-a "" "" feedback B1 "One machine, tiny writes: SQLite is enough." --pick a
-as demo-session-a fork-0001 fork feedback B1 "A fork's view: <b>not bold</b> & safe" --pick a
-as demo-session-a "" "" add "Which port?" -o a=8810 -o b="pick later" --recommend a --label "#8" --parent B1
+as alice-01 "" "" whoami --name Smith
+as alice-01 "" "" feedback B1 "One machine, tiny writes: SQLite is enough." --pick a
+as alice-01 fork-0001 fork feedback B1 "A fork's view: <b>not bold</b> & safe" --pick a
+as alice-01 "" "" add "Which port?" -o a=8810 -o b="pick later" --recommend a --label "#8" --parent B1
+# A session copied from alice-01 (/branch): its transcript names its parent, as Claude Code's do.
+printf '%s\n' '{"type":"assistant","sessionId":"alice-cp","forkedFrom":{"sessionId":"alice-01","messageUuid":"m"},"requestSessionId":"alice-01"}' \
+    >"$dir/alice-cp.jsonl"
+(
+    export FOCUS_BOARD_TRANSCRIPT=$dir/alice-cp.jsonl
+    as alice-cp "" "" feedback B2 "From the copy: 8810 is free and clear." --pick a
+) || exit 1
 cd "$dir/beta" || exit 1
-as demo-session-b "" "" add "Ship the page today?" -o a=yes -o b=no --label "#3"
-as demo-session-b "" "" feedback B3 "Waiting on the browser check."
+as bob-0002 "" "" add "Ship the page today?" -o a=yes -o b=no --label "#3"
+as bob-0002 "" "" feedback B3 "Waiting on the browser check."
 cd "$dir/alpha-feature" || exit 1
-as demo-session-c "" "" add "Merge the feature branch now?" \
+as carol-03 "" "" add "Merge the feature branch now?" \
     -o a="merge" -o b="wait for the review" --recommend b --label "#21"

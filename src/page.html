@@ -264,10 +264,11 @@ function renderTree() {
     for (const x of list) m.set(key(x), [...(m.get(key(x)) || []), x]);
     return [...m].sort((a, b) => a[0].localeCompare(b[0]));
   };
-  const agentsOf = (s) => sessions.filter((a) => a.parent === s.id);
-  const sessionNode = (s) => node("writer", s.id, s.label, s.session_id, clock(s.last_at),
-    agentsOf(s).map((a) => node("writer", a.id, a.label.replace(/ in \S+$/, ""), a.agent_id, clock(a.last_at))));
-  const tops = sessions.filter((s) => !s.agent_id);
+  // Under each writer: its agents, and the sessions copied from it (/branch, /fork), at any depth.
+  const childrenOf = (w) => sessions.filter((c) => c.parent === w.id);
+  const sessionNode = (w) => node("writer", w.id, w.agent_id ? w.label.replace(/ in \S+$/, "") : w.label,
+    w.agent_id || w.session_id, clock(w.last_at), childrenOf(w).map(sessionNode));
+  const tops = sessions.filter((s) => !s.agent_id && !sessions.some((p) => p.id === s.parent));
   const projects = group(tops, (s) => s.project).map(([project, list]) => {
     const workspaces = group(list, (s) => s.workspace);
     // A project whose only workspace is the project folder itself needs no workspace level.

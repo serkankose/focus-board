@@ -16,7 +16,7 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
-use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer};
+use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer, label_in};
 
 /// The board's port (owner, 2026-11-21).
 pub const PORT: u16 = 8810;
@@ -244,15 +244,15 @@ async fn tree(State(app): State<App>) -> ApiResult {
             .into_iter()
             .map(|(w, seq, at)| (w, (seq, at)))
             .collect();
-        let writers: Vec<Value> = store
-            .writers()?
+        let writers = store.writers()?;
+        let rows: Vec<Value> = writers
             .iter()
             .map(|w: &Writer| {
                 let (last_seq, last_at) = last.get(&w.id).cloned().unzip();
                 json!({
                     "id": w.id,
                     "kind": w.kind,
-                    "label": w.label(),
+                    "label": label_in(&writers, w.id),
                     "session_id": w.session_id,
                     "agent_id": w.agent_id,
                     "agent_type": w.agent_type,
@@ -265,9 +265,7 @@ async fn tree(State(app): State<App>) -> ApiResult {
                 })
             })
             .collect();
-        Ok(Json(
-            json!({ "last": store.last_seq()?, "writers": writers }),
-        ))
+        Ok(Json(json!({ "last": store.last_seq()?, "writers": rows })))
     })
     .await
 }

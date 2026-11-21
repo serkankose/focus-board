@@ -105,7 +105,12 @@ const TIMELINE_ROWS: &str = "FROM cells c JOIN items i ON i.id = c.item
      WHERE c.id > ?1
        AND (?2 IS NULL OR a.project = ?2)
        AND (?3 IS NULL OR a.workspace = ?3)
-       AND (?4 IS NULL OR a.id = ?4 OR a.parent = ?4 OR w.id = ?4 OR w.parent = ?4)";
+       AND (?4 IS NULL OR a.id IN branch OR w.id IN branch)";
+
+/// A tree node's branch, at any depth: the writer `?4`, its agents and the sessions copied from
+/// it, their agents, and so on. Goes in front of a query that uses [`TIMELINE_ROWS`].
+const BRANCH_OF_4: &str = "WITH RECURSIVE branch(id) AS (
+     SELECT ?4 UNION SELECT w2.id FROM writers w2 JOIN branch b ON w2.parent = b.id)";
 
 #[derive(Debug)]
 pub enum OpenError {
@@ -288,6 +293,25 @@ impl Writer {
     }
 }
 
+/// A writer's label among all writers: a session copied from another (`/branch`, `/fork`) says
+/// which, as the brief asks ("labelled with the session it was forked from").
+pub fn label_in(writers: &[Writer], id: WriterId) -> String {
+    let Some(w) = writers.iter().find(|w| w.id == id) else {
+        return format!("writer {id}");
+    };
+    let copied_from = (w.kind == "session" && w.agent_id.is_empty())
+        .then_some(w.parent)
+        .flatten()
+        .and_then(|p| writers.iter().find(|x| x.id == p));
+    match copied_from {
+        Some(parent) => {
+            let short: String = parent.session_id.chars().take(8).collect();
+            format!("{} (copy of {short})", w.label())
+        }
+        None => w.label(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemSummary {
     pub id: ItemId,
@@ -309,7 +333,8 @@ pub struct ItemSummary {
 pub struct Filter {
     pub project: Option<String>,
     pub workspace: Option<String>,
-    /// A node of the tree: this writer and the agents under it.
+    /// A node of the tree: this writer and everything under it, at any depth (its agents, the
+    /// sessions copied from it, theirs).
     pub writer: Option<WriterId>,
     /// `open`, `answered`, `closed`, or `active` for anything not closed.
     pub status: Option<String>,
@@ -585,7 +610,8 @@ impl Store {
         newest: Option<i64>,
     ) -> Result<Vec<Cell>, rusqlite::Error> {
         let sql = format!(
-            "SELECT c.id, c.item, c.writer, c.field, c.version, c.value, c.client, c.written_at
+            "{BRANCH_OF_4}
+             SELECT c.id, c.item, c.writer, c.field, c.version, c.value, c.client, c.written_at
              {TIMELINE_ROWS} ORDER BY c.id DESC LIMIT ?5"
         );
         let mut rows = self.cells(
@@ -604,7 +630,7 @@ impl Store {
 
     /// How many rows the timeline holds for this filter, before any `newest` cut.
     pub fn timeline_len(&self, filter: &Filter) -> Result<i64, rusqlite::Error> {
-        let sql = format!("SELECT COUNT(*) {TIMELINE_ROWS}");
+        let sql = format!("{BRANCH_OF_4} SELECT COUNT(*) {TIMELINE_ROWS}");
         self.conn.query_row(
             &sql,
             params![0, filter.project, filter.workspace, filter.writer],
@@ -631,7 +657,9 @@ impl Store {
     /// Items whose author matches the filter, oldest first.
     pub fn items(&self, filter: &Filter) -> Result<Vec<ItemSummary>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT i.id, i.label, i.parent, i.author,
+            "WITH RECURSIVE branch(id) AS (
+                 SELECT ?3 UNION SELECT w2.id FROM writers w2 JOIN branch b ON w2.parent = b.id)
+             SELECT i.id, i.label, i.parent, i.author,
                 (SELECT value FROM cells WHERE item = i.id AND field = 'question'
                     ORDER BY id DESC LIMIT 1),
                 (SELECT value FROM cells WHERE item = i.id AND field = 'status'
@@ -640,7 +668,7 @@ impl Store {
              FROM items i JOIN writers a ON a.id = i.author
              WHERE (?1 IS NULL OR a.project = ?1)
                AND (?2 IS NULL OR a.workspace = ?2)
-               AND (?3 IS NULL OR a.id = ?3 OR a.parent = ?3)
+               AND (?3 IS NULL OR a.id IN branch)
              ORDER BY i.id",
         )?;
         let rows = stmt.query_map(
@@ -722,22 +750,43 @@ fn resolve_writer(tx: &Transaction, who: &Identity, place: &Place) -> Result<Wri
     if let Some(id) = find_writer(tx, &who.session_id, &who.agent_id)? {
         return Ok(id);
     }
-    let parent = if who.agent_id.is_empty() {
-        None
-    } else {
-        Some(match find_writer(tx, &who.session_id, "")? {
-            Some(p) => p,
-            None => insert_writer(tx, &who.session_id, "", "", None, place)?,
-        })
+    if who.agent_id.is_empty() {
+        let parent = session_parent(tx, who, place)?;
+        return insert_writer(tx, &who.session_id, "", "", parent, place);
+    }
+    let session = match find_writer(tx, &who.session_id, "")? {
+        Some(s) => s,
+        None => {
+            let parent = session_parent(tx, who, place)?;
+            insert_writer(tx, &who.session_id, "", "", parent, place)?
+        }
     };
     insert_writer(
         tx,
         &who.session_id,
         &who.agent_id,
         &who.agent_type,
-        parent,
+        Some(session),
         place,
     )
+}
+
+/// The parent of a session new to the board: the session it was copied from (`/branch`,
+/// `/fork`), created with it when that one has never written. `None` for a session that is no
+/// copy.
+fn session_parent(
+    tx: &Transaction,
+    who: &Identity,
+    place: &Place,
+) -> Result<Option<WriterId>, WriteError> {
+    let parent = &who.parent_session;
+    if parent.is_empty() || parent == &who.session_id {
+        return Ok(None);
+    }
+    Ok(Some(match find_writer(tx, parent, "")? {
+        Some(p) => p,
+        None => insert_writer(tx, parent, "", "", None, place)?,
+    }))
 }
 
 fn insert_writer(
@@ -966,6 +1015,7 @@ mod tests {
             session_id: "s".into(),
             agent_id: String::new(),
             agent_type: String::new(),
+            ..Default::default()
         };
         let author = resolve_writer(tx, &who, &place).unwrap();
         tx.execute("INSERT INTO items (author) VALUES (?1)", params![author])

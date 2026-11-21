@@ -8,8 +8,10 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
-use focus_board::identity::{Identity, Place};
-use focus_board::store::{Cell, Field, Filter, ItemId, ItemSummary, NewItem, Store, Writer};
+use focus_board::identity::{Identity, Place, fork_parent};
+use focus_board::store::{
+    Cell, Field, Filter, ItemId, ItemSummary, NewItem, Store, Writer, label_in,
+};
 use focus_board::{db_path, home_dir, hook, server};
 
 const PAGE: &str = "http://127.0.0.1:8810";
@@ -216,8 +218,21 @@ fn here() -> Result<Place, String> {
 
 /// Everything a write needs. Refuses before opening anything when the hook gave no identity.
 fn writer() -> Result<(Identity, Place, Store), String> {
-    let who = Identity::from_env().map_err(|e| e.to_string())?;
-    Ok((who, here()?, open()?))
+    let mut who = Identity::from_env().map_err(|e| e.to_string())?;
+    let (place, store) = (here()?, open()?);
+    // A session new to the board may be a copy (/branch, /fork): look its parent up once, now.
+    let session = Identity {
+        session_id: who.session_id.clone(),
+        ..Identity::default()
+    };
+    let known = store.find_writer(&session).map_err(|e| e.to_string())?;
+    if known.is_none()
+        && !who.transcript.is_empty()
+        && let Some(parent) = fork_parent(Path::new(&who.transcript), &who.session_id)
+    {
+        who.parent_session = parent;
+    }
+    Ok((who, place, store))
 }
 
 fn parse_item(s: &str) -> Result<ItemId, String> {
@@ -234,11 +249,7 @@ fn folder(path: &str) -> &str {
 }
 
 fn label(writers: &[Writer], id: i64) -> String {
-    writers
-        .iter()
-        .find(|w| w.id == id)
-        .map(Writer::label)
-        .unwrap_or_else(|| format!("writer {id}"))
+    label_in(writers, id)
 }
 
 fn shown(value: &Value) -> String {

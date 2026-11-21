@@ -136,6 +136,7 @@ fn hook_denies_a_hand_set_identity() {
         "export FOCUS_BOARD_AGENT=; focus-board list",
         "timeout 5 env FOCUS_BOARD_SESSION=$CLAUDE_CODE_SESSION_ID focus-board add q",
         "FOCUS_BOARD_AGENT_TYPE=fork true",
+        "FOCUS_BOARD_TRANSCRIPT=/tmp/forged.jsonl focus-board add q",
     ] {
         let out = hook(&bash_input(
             "sess-1",
@@ -427,4 +428,61 @@ fn a_shared_folder_name_does_not_mix_projects() {
         .map(|i| i["question"].as_str().unwrap())
         .collect();
     assert_eq!(questions, vec!["raised in one/same"]);
+}
+
+/// Review R3, end to end: the hook passes the transcript's path, and a copied session's first
+/// write files it under the session it was copied from. An unsafe path is not passed on.
+#[test]
+fn a_copied_session_writes_under_its_parent() {
+    let board = Board::new();
+    board.ok(Some(("sess-root", "", "")), &["add", "q?"]);
+    let transcript = board.dir.path().join("copy.jsonl");
+    let lines = [
+        serde_json::json!({ "type": "x", "sessionId": "sess-copy" }),
+        serde_json::json!({ "type": "assistant", "sessionId": "sess-copy",
+            "forkedFrom": { "sessionId": "sess-root", "messageUuid": "m" },
+            "requestSessionId": "sess-root" }),
+    ];
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    std::fs::write(&transcript, text).unwrap();
+
+    let command = format!("{BIN} feedback B1 'from the copy' && {BIN} whoami");
+    let mut input: Value = serde_json::from_str(&bash_input("sess-copy", None, &command)).unwrap();
+    input["transcript_path"] = Value::String(transcript.to_str().unwrap().to_string());
+    let reply: Value = serde_json::from_slice(&hook(&input.to_string()).stdout).unwrap();
+    let rewritten = reply["hookSpecificOutput"]["updatedInput"]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        rewritten.contains("FOCUS_BOARD_TRANSCRIPT='/"),
+        "{rewritten}"
+    );
+
+    let out = Command::new("bash")
+        .arg("-c")
+        .arg(&rewritten)
+        .current_dir(board.dir.path().join("work"))
+        .env("FOCUS_BOARD_DB", board.dir.path().join("board.sqlite"))
+        .env("HOME", board.dir.path())
+        .env_remove("FOCUS_BOARD_SESSION")
+        .env_remove("FOCUS_BOARD_AGENT")
+        .env_remove("FOCUS_BOARD_AGENT_TYPE")
+        .env_remove("FOCUS_BOARD_TRANSCRIPT")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let whoami = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        whoami.contains("writes as  session sess-cop (copy of sess-roo)")
+            && whoami.contains("under      session sess-roo"),
+        "{whoami}"
+    );
+
+    input["transcript_path"] = Value::String("/tmp/it's.jsonl".into());
+    let reply: Value = serde_json::from_slice(&hook(&input.to_string()).stdout).unwrap();
+    let command = reply["hookSpecificOutput"]["updatedInput"]["command"]
+        .as_str()
+        .unwrap();
+    assert!(command.contains("FOCUS_BOARD_TRANSCRIPT=''"), "{command}");
 }

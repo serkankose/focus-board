@@ -27,7 +27,7 @@ tests that prove it. Read it before designing anything. Don't copy it here.
   (`src/identity.rs`), the hook (`src/hook.rs`), the command (`src/main.rs`) and the server
   (`src/server.rs`, `focus-board serve`), with their tests (`tests/store.rs`, `tests/command.rs`,
   `tests/server.rs`). Step 5, the page (`src/page.html`), runs in a real browser:
-  `checks/page-check.sh` drives a headless Firefox through it (12 checks).
+  `checks/page-check.sh` drives a headless Firefox through it (13 checks).
 - The first review (`~/temp/focus-board/`, 2026-11-21) is answered on branch `review-1`. Step 6,
   installing, is next.
 - The command is installed with `cargo install --path . --locked` (on `PATH` from
@@ -56,8 +56,7 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 
 ## Open choices — the owner's call, not yet made
 
-- ❓ Session forks (`/branch`, `--fork-session`): find where one names its parent, or defer
-  (review R3; `DESIGN.md`, "Open").
+- None. (Review R3, copied sessions, was built at the owner's word on 2026-11-21.)
 
 ## Session identity (owner, 2026-11-21)
 
@@ -68,8 +67,12 @@ tests that prove it. Read it before designing anything. Don't copy it here.
   seen: the session's name, an agent id, a parent (fork) id. Project and workspace come from the
   working directory's git top level.
 - Checked (2026-11-21): a subagent's hook input holds the parent's `session_id` plus its own
-  `agent_id` and `agent_type`. Not checked: an Agent-tool fork, and a `/branch` or
-  `--fork-session` fork, which gets a new session id with no parent known (review R3).
+  `agent_id` and `agent_type`. Not checked: an Agent-tool fork.
+- Checked (2026-11-21, `/branch` then `/fork` by the owner): a copied session gets a new id and
+  writes as itself. Its parent is read from its transcript (`requestSessionId`, else
+  `forkedFrom`); see `DESIGN.md`, "Copied sessions".
+- The hook denies any Bash command whose text assigns `FOCUS_BOARD_*`, a heredoc too. Edit such
+  text in this repo with the file tools.
 
 ## Machine resources (owner, 2026-11-21)
 

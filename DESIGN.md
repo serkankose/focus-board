@@ -98,8 +98,21 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   `env`, `exec`, `command`, `time`, `nohup`, `nice`, `timeout N`, `!` and shell keywords.
 - **Parents.** An Agent-tool fork or subagent has its parent's session id and its own agent id, so
   its parent is that session's writer. Seen for a subagent; **unverified** for an Agent-tool fork
-  (`subagent_type: fork`), which is expected to behave the same. A session forked with `/branch` or `--fork-session` gets a new session id, and where its
-  parent's id comes from is unknown. Until it is known, such a fork shows as its own session.
+  (`subagent_type: fork`), which is expected to behave the same.
+- **Copied sessions** (`/branch`, `/fork`, `--fork-session`; review R3, built 2026-11-21 at the
+  owner's word). Such a copy gets a new session id and writes as itself. Its hooks name no parent,
+  but its transcript does, and the hook passes the transcript's path as
+  `FOCUS_BOARD_TRANSCRIPT`.
+  - Copied assistant turns carry `requestSessionId`, the session that made them, and a copy of a
+    copy keeps the older ids and adds its parent's. So the last one other than the session's own
+    is the immediate parent.
+  - `forkedFrom.sessionId` on copied lines is the fallback; it names the root of a chain.
+  - Seen in the owner's checks (V, Claude Code 2.1.329): a `/branch` of the root, then a `/fork`
+    of that branch. Both fields are undocumented; when they are missing, the copy shows as a
+    session of its own.
+  - The command reads the transcript only on a session's first write (`identity::fork_parent`).
+    The store then files the copy under its parent, creating the parent's row if it never wrote.
+    Labels say "(copy of …)". A tree node's filter covers its whole branch, at any depth.
 - **Project and workspace** come from the command's working directory at the writer's first write,
   and stay fixed after that, so a later `cd` does not move a writer.
   - Workspace: `git rev-parse --show-toplevel`. Project: the main checkout, from
@@ -177,10 +190,11 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(review R6)* A shared folder name does not mix projects | `a_shared_folder_name_does_not_mix_projects` |
 | *(review R8)* The timeline is cut and says so; active items on the server | `timeline_is_cut_and_says_so`, `timeline_cut_and_active_filter` |
 | *(review R10, R11, G8)* Repeated letters, a newer layout, the author-only question | `a_repeated_option_letter_is_refused`, `a_newer_layout_is_refused`, `only_the_author_writes_the_question` |
-| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 12 checks in headless Firefox |
+| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 13 checks in headless Firefox |
 | *(owner's ask)* Each item keeps where it was raised: repo, worktree, branch, path | `item_context_is_recorded_at_raise_time`, the branch asserts in `projects_and_worktrees_stay_apart`, and the page check "each item shows its repo, worktree, branch and full path" |
 | A board from before layout versions is refused | `an_unversioned_board_is_refused` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 37 checks |
+| *(review R3)* A copied session finds its parent and sits under it | `fork_parent_reads_the_transcript`, `a_copied_session_files_under_its_parent`, `a_copied_session_writes_under_its_parent` (the binary, through the hook), and the page check "a copied session sits under the session it was copied from" |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 43 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next
@@ -211,11 +225,13 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
 
 ## Open, the owner's call
 
-- ❓ Session forks (`/branch`, `--fork-session`) get a new session id and show as sessions of their
-  own, not under their parent as the brief asks (review R3): find where a fork names its parent,
-  or defer.
+- None.
 
 ## Accepted for now
+
+- The hand-set-identity guard reads command text, so a Bash command that only *writes* such an
+  assignment somewhere (a heredoc writing a test file) is denied too. In this repository, make
+  those edits with the file tools, which the hook does not see.
 
 - A session that moves into another worktree mid-session stays under the workspace of its first
   write.

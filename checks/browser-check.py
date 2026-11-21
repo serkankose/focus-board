@@ -174,6 +174,13 @@ try:
         check("after a refusal the page shows the newer state at once, not at the next poll", False, str(e))
     m.shot(os.path.join(out, "page-2-answered-and-refused.png"))
 
+    under = m.js("""const copy = [...document.querySelectorAll('nav button.node')]
+            .find(b => b.innerText.startsWith('session alice-cp'));
+        const li = copy && copy.closest('ul').closest('li');
+        return li ? li.querySelector('button.node').innerText : null;""")
+    check("a copied session sits under the session it was copied from",
+          bool(under) and under.startswith("Smith"), str(under))
+
     labels = m.js("return [...document.querySelectorAll('nav button.node')].map(b => b.innerText.split(' ·')[0])")
     check("a project with one workspace has no workspace level; one with two has it",
           labels.count("beta") == 1 and labels.count("alpha") == 2 and "alpha-feature" in labels,

@@ -48,7 +48,7 @@ check "REPLACE may take a writer"   store.rs store update_and_delete_refused 's/
 check "agent folds into session"    store.rs store fork_and_parent_own_cells 's/find_writer\(tx, &who\.session_id, &who\.agent_id\)\?/find_writer(tx, &who.session_id, "")?/'
 check "deferred transactions"       store.rs store concurrent_writers_both_land 's/TransactionBehavior::Immediate/TransactionBehavior::Deferred/g'
 check "answer open to sessions"     store.rs store session_cannot_write_the_owners_column 's/Field::Answer if !is_owner =>/Field::Answer if false =>/'
-check "old timeline node filter"    store.rs store fork_in_tree_and_timeline_order 's/a\.id = \?4 OR a\.parent = \?4 OR w\.id/w.id/'
+check "old timeline node filter"    store.rs store fork_in_tree_and_timeline_order 's/a\.id IN branch OR w\.id IN branch/w.id IN branch/'
 
 # Identity and place.
 check "worktree is its own project" identity.rs store projects_and_worktrees_stay_apart 's/project: shown\(&project\)/project: shown(&top)/'
@@ -88,6 +88,14 @@ check "status set by a non-author"   store.rs command command_round_trip 's/Fiel
 check "item context not recorded"    store.rs store item_context_is_recorded_at_raise_time 's/place\.branch\n(\s*)\]/""\n$1]/'
 check "branch not detected"          identity.rs store projects_and_worktrees_stay_apart 's/branch: branch_of\(&dir\),/branch: String::new(),/'
 check "unversioned board opened"     store.rs store an_unversioned_board_is_refused 's/if layout == 0 && has_items \{/if false && layout == 0 && has_items {/'
+
+# Added with the copied-session parent (review R3, the owner's /branch and /fork checks).
+check "copy ignores its parent"      store.rs store a_copied_session_files_under_its_parent 's/if parent\.is_empty\(\) \|\| parent == &who\.session_id \{/if true {/'
+check "node filter one level"        store.rs store a_copied_session_files_under_its_parent 's/JOIN branch b ON w2\.parent = b\.id\)/JOIN branch b ON w2.parent = b.id AND 0)/g'
+check "parent is the chain's root"   identity.rs store fork_parent_reads_the_transcript 's/last_request\.or\(forked_from\)/forked_from.or(last_request)/'
+check "command skips the lookup"     main.rs command a_copied_session_writes_under_its_parent 's/who\.parent_session = parent;/let _ = parent;/'
+check "transcript hand-set allowed"  hook.rs command hook_denies_a_hand_set_identity 's/\[SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR, TRANSCRIPT_VAR\]/[SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR]/'
+check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
 cp -r .pristine/src/. src/
 exit $status

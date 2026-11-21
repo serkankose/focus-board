@@ -90,6 +90,7 @@ fn session(id: &str) -> Identity {
         session_id: id.into(),
         agent_id: String::new(),
         agent_type: String::new(),
+        ..Default::default()
     }
 }
 
@@ -345,6 +346,7 @@ fn page_sees_writes_made_past_it() {
         session_id: "s1".into(),
         agent_id: "f1".into(),
         agent_type: "fork".into(),
+        ..Default::default()
     };
     board
         .store()

@@ -5,8 +5,10 @@ use std::process::Command;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use focus_board::identity::{Identity, IdentityError, Place};
-use focus_board::store::{Field, Filter, LAYOUT, NewItem, OWNER, OpenError, Store, WriteError};
+use focus_board::identity::{Identity, IdentityError, Place, fork_parent};
+use focus_board::store::{
+    Field, Filter, LAYOUT, NewItem, OWNER, OpenError, Store, WriteError, label_in,
+};
 use serde_json::json;
 
 fn board() -> (tempfile::TempDir, PathBuf) {
@@ -20,6 +22,7 @@ fn session(id: &str) -> Identity {
         session_id: id.into(),
         agent_id: String::new(),
         agent_type: String::new(),
+        ..Default::default()
     }
 }
 
@@ -28,6 +31,7 @@ fn agent(session_id: &str, agent_id: &str, agent_type: &str) -> Identity {
         session_id: session_id.into(),
         agent_id: agent_id.into(),
         agent_type: agent_type.into(),
+        ..Default::default()
     }
 }
 
@@ -859,4 +863,165 @@ fn an_unversioned_board_is_refused() {
         Err(other) => panic!("wrong refusal: {other}"),
         Ok(_) => panic!("an unversioned board was opened"),
     }
+}
+
+/// Review R3, from the owner's /branch and /fork checks (Claude Code 2.1.329): a copied session
+/// finds its parent in its transcript. Copied turns name the session that made them, so the last
+/// such id other than its own is the immediate parent; `forkedFrom` is the fallback.
+#[test]
+fn fork_parent_reads_the_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, lines: &[serde_json::Value]| {
+        let path = dir.path().join(name);
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let from_root = json!({ "type": "assistant", "sessionId": "x",
+        "forkedFrom": { "sessionId": "root", "messageUuid": "m1" }, "requestSessionId": "root" });
+
+    let root = write(
+        "root.jsonl",
+        &[json!({ "type": "assistant", "requestSessionId": "root" })],
+    );
+    assert_eq!(
+        fork_parent(&root, "root"),
+        None,
+        "a session that is no copy"
+    );
+
+    let branch = write(
+        "branch.jsonl",
+        &[
+            json!({ "type": "x" }),
+            from_root.clone(),
+            json!({ "type": "assistant" }),
+        ],
+    );
+    assert_eq!(
+        fork_parent(&branch, "br").as_deref(),
+        Some("root"),
+        "a /branch of root"
+    );
+
+    let copy = write(
+        "copy.jsonl",
+        &[
+            from_root.clone(),
+            json!({ "type": "assistant", "requestSessionId": "br" }),
+            json!({ "type": "assistant", "requestSessionId": "cp" }),
+        ],
+    );
+    assert_eq!(
+        fork_parent(&copy, "cp").as_deref(),
+        Some("br"),
+        "the immediate parent, not the root"
+    );
+
+    let only = write(
+        "only.jsonl",
+        &[json!({ "forkedFrom": { "sessionId": "root" } })],
+    );
+    assert_eq!(
+        fork_parent(&only, "x").as_deref(),
+        Some("root"),
+        "forkedFrom as the fallback"
+    );
+
+    assert_eq!(
+        fork_parent(&dir.path().join("none.jsonl"), "x"),
+        None,
+        "no transcript"
+    );
+    let bad = write("bad.jsonl", &[json!({ "requestSessionId": "a'b" })]);
+    assert_eq!(
+        fork_parent(&bad, "x"),
+        None,
+        "an id with characters ids never have"
+    );
+}
+
+/// Brief: "A fork writes as itself ... labelled with the session it was forked from" and "shows
+/// under its parent in the tree". A copied session is filed under its parent, whose branch holds
+/// the copy and its own agents at any depth; a parent that never wrote is made with it.
+#[test]
+fn a_copied_session_files_under_its_parent() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let here = place("p", "p");
+    let item = store
+        .add_item(&session("root"), &here, &question("q"))
+        .unwrap();
+    let copy = Identity {
+        session_id: "copy".into(),
+        parent_session: "root".into(),
+        ..Identity::default()
+    };
+    store
+        .write_as_session(
+            &copy,
+            &here,
+            item,
+            Field::Feedback,
+            &feedback("from the copy"),
+            None,
+        )
+        .unwrap();
+    let copy_agent = Identity {
+        session_id: "copy".into(),
+        agent_id: "a1".into(),
+        agent_type: "general-purpose".into(),
+        ..Identity::default()
+    };
+    let sub = store
+        .add_item(&copy_agent, &here, &question("raised by the copy's agent"))
+        .unwrap();
+
+    let writers = store.writers().unwrap();
+    let id = |sid: &str, aid: &str| {
+        writers
+            .iter()
+            .find(|w| w.session_id == sid && w.agent_id == aid)
+            .unwrap()
+            .id
+    };
+    let (r, c, a) = (id("root", ""), id("copy", ""), id("copy", "a1"));
+    let parent_of = |w: i64| writers.iter().find(|x| x.id == w).unwrap().parent;
+    assert_eq!((parent_of(c), parent_of(a)), (Some(r), Some(c)));
+    assert_eq!(label_in(&writers, c), "session copy (copy of root)");
+
+    let branch = Filter {
+        writer: Some(r),
+        ..Filter::default()
+    };
+    let ids: Vec<i64> = store.items(&branch).unwrap().iter().map(|i| i.id).collect();
+    assert_eq!(
+        ids,
+        vec![item, sub],
+        "the root's branch holds its copy's agent's item"
+    );
+    let wrote: Vec<i64> = store
+        .timeline(&branch, 0, None)
+        .unwrap()
+        .iter()
+        .map(|c| c.writer)
+        .collect();
+    assert!(wrote.contains(&c) && wrote.contains(&a), "{wrote:?}");
+
+    let orphan = Identity {
+        session_id: "copy2".into(),
+        parent_session: "never-wrote".into(),
+        ..Identity::default()
+    };
+    store
+        .write_as_session(&orphan, &here, item, Field::Feedback, &feedback("x"), None)
+        .unwrap();
+    let writers = store.writers().unwrap();
+    let never = writers
+        .iter()
+        .find(|w| w.session_id == "never-wrote")
+        .unwrap()
+        .id;
+    let copy2 = writers.iter().find(|w| w.session_id == "copy2").unwrap();
+    assert_eq!(copy2.parent, Some(never));
 }

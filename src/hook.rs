@@ -9,12 +9,15 @@
 
 use serde_json::{Value, json};
 
-use crate::identity::{AGENT_TYPE_VAR, AGENT_VAR, SESSION_VAR, is_plain_id};
+use crate::identity::{
+    AGENT_TYPE_VAR, AGENT_VAR, SESSION_VAR, TRANSCRIPT_VAR, is_plain_id, is_safe_path,
+};
 
 /// Why a command that sets the identity variables itself is denied.
-pub const DENY_REASON: &str = "focus-board: the hook sets FOCUS_BOARD_SESSION, FOCUS_BOARD_AGENT \
-     and FOCUS_BOARD_AGENT_TYPE; a command never sets them itself, or a subagent would write as \
-     its parent. Run focus-board as the first word of the command and let the hook add them.";
+pub const DENY_REASON: &str = "focus-board: the hook sets FOCUS_BOARD_SESSION, FOCUS_BOARD_AGENT, \
+     FOCUS_BOARD_AGENT_TYPE and FOCUS_BOARD_TRANSCRIPT; a command never sets them itself, or a \
+     subagent would write as its parent. Run focus-board as the first word of the command and let \
+     the hook add them.";
 
 /// The hook's answer for one `PreToolUse` input, or `None` to leave the call alone. It never
 /// fails: whatever goes wrong, the tool call runs as it was, and an unidentified write is then
@@ -46,9 +49,17 @@ pub fn pre_tool_use(input: &str) -> Option<String> {
     if session.is_empty() || ![session, agent, agent_type].iter().all(|v| is_plain_id(v)) {
         return None;
     }
-    // Plain ids only (checked above), so single quotes cannot be broken out of.
+    // Plain ids only (checked above), so single quotes cannot be broken out of; the transcript's
+    // path only when it is safe too. A copied session finds its parent there (see fork_parent).
+    let transcript = text("transcript_path");
+    let transcript = if is_safe_path(transcript) {
+        transcript
+    } else {
+        ""
+    };
     let prefix = format!(
-        "export {SESSION_VAR}='{session}' {AGENT_VAR}='{agent}' {AGENT_TYPE_VAR}='{agent_type}'; "
+        "export {SESSION_VAR}='{session}' {AGENT_VAR}='{agent}' {AGENT_TYPE_VAR}='{agent_type}' \
+         {TRANSCRIPT_VAR}='{transcript}'; "
     );
     let mut updated = tool_input.clone();
     updated.insert("command".into(), json!(format!("{prefix}{command}")));
@@ -101,14 +112,16 @@ pub fn runs_board(command: &str) -> bool {
 /// value at hand, `$CLAUDE_CODE_SESSION_ID`, is a subagent's parent's id. Mentioning a variable,
 /// as `grep` or `echo $NAME` do, is fine. A guard against mistakes, not against an adversary.
 pub fn sets_identity(command: &str) -> bool {
-    [SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR].iter().any(|var| {
-        command.match_indices(var).any(|(at, _)| {
-            let before = command[..at].chars().next_back();
-            let starts_a_name = before.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
-            let rest = &command[at + var.len()..];
-            starts_a_name && (rest.starts_with('=') || rest.starts_with("+="))
+    [SESSION_VAR, AGENT_VAR, AGENT_TYPE_VAR, TRANSCRIPT_VAR]
+        .iter()
+        .any(|var| {
+            command.match_indices(var).any(|(at, _)| {
+                let before = command[..at].chars().next_back();
+                let starts_a_name = before.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+                let rest = &command[at + var.len()..];
+                starts_a_name && (rest.starts_with('=') || rest.starts_with("+="))
+            })
         })
-    })
 }
 
 fn is_assignment(word: &str) -> bool {
@@ -167,6 +180,7 @@ mod tests {
             "FOCUS_BOARD_SESSION+=x true",
             "timeout 5 env FOCUS_BOARD_SESSION=$CLAUDE_CODE_SESSION_ID focus-board add q",
             "declare -x FOCUS_BOARD_SESSION=x",
+            "FOCUS_BOARD_TRANSCRIPT=/tmp/forged.jsonl focus-board list",
         ] {
             assert!(sets_identity(yes), "should be caught: {yes}");
         }
