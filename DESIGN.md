@@ -229,6 +229,13 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
    stop matching and every board call may prompt. The unit sends the server's stderr (startup and
    refused requests) to `%S/focus-board/serve.log`, which is `~/.local/state/focus-board/`, the
    log folder the owner chose (review R5).
+   - **Done 2026-11-21:** `install/linux.sh` and `install/focus-board.service`. Verified: the
+     service is active and listens on 127.0.0.1:8810 only; a foreign `Host` gets 403 and is
+     logged; the real board was created. The global hook gives a session its id and denies a
+     hand-set one.
+   - systemd opens the log file before it would create a `StateDirectory=`, so the first start
+     failed with `209/STDOUT`. The install script creates the folder.
+   - **Still open:** the run in a session that is not in auto mode.
 
 ## Platforms
 

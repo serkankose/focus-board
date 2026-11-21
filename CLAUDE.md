@@ -28,12 +28,16 @@ tests that prove it. Read it before designing anything. Don't copy it here.
   (`src/server.rs`, `focus-board serve`), with their tests (`tests/store.rs`, `tests/command.rs`,
   `tests/server.rs`). Step 5, the page (`src/page.html`), runs in a real browser:
   `checks/page-check.sh` drives a headless Firefox through it (13 checks).
-- The first review (`~/temp/focus-board/`, 2026-11-21) is answered on branch `review-1`. Step 6,
-  installing, is next.
-- The command is installed with `cargo install --path . --locked` (on `PATH` from
-  `~/.cargo/bin`). The hook runs that installed copy from this project's gitignored
-  `.claude/settings.local.json`, never the build in `target/`, which every build and test run
-  replaces. Reinstall on purpose after a green build. Step 6 moves the hook to the global settings.
+- Three review rounds (`~/temp/focus-board/`, 2026-11-21) are answered and merged.
+- **Installed (step 6, owner 2026-11-21 "#146/a", "#148/a"):**
+  - `install/linux.sh` puts the command on `PATH` (`cargo install --path . --locked`) and runs the
+    server as the systemd user service `focus-board.service`. It logs to
+    `~/.local/state/focus-board/serve.log`, and the real board is at
+    `~/.local/share/focus-board/board.sqlite` (`focus-board where`). `--remove` stops it.
+  - The hook is in the owner's global `~/.claude/settings.json` (`PreToolUse`, matcher `Bash`), so
+    every session on this machine gets it. It runs the installed copy, never the build in
+    `target/`. Reinstall on purpose after a green build; that also updates what every session runs.
+  - This project's `.claude/settings.local.json` holds no hook any more.
 - Try the command on a scratch board: `FOCUS_BOARD_DB=<scratch path> focus-board whoami`. Without
   `FOCUS_BOARD_DB` it writes to the real board, where nothing can be deleted.
 - **Test:** `cargo test`. Lint: `cargo clippy --all-targets`, `cargo fmt --check`.

@@ -1,0 +1,16 @@
+# The board's server as a systemd user service (Linux). Installed by install/linux.sh.
+# It starts at login, restarts after a crash, and serves the page on 127.0.0.1:8810 only.
+[Unit]
+Description=focus-board: the shared board of open questions, on 127.0.0.1:8810
+
+[Service]
+ExecStart=%h/.cargo/bin/focus-board serve
+Restart=on-failure
+RestartSec=2
+# %S is $XDG_STATE_HOME (~/.local/state) for a user unit: the log folder the owner chose.
+# install/linux.sh creates the folder: systemd opens these files before it would create one.
+StandardOutput=append:%S/focus-board/serve.log
+StandardError=append:%S/focus-board/serve.log
+
+[Install]
+WantedBy=default.target
