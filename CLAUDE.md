@@ -26,8 +26,10 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - Build steps 2 to 4 of `DESIGN.md` are done: the store (`src/store.rs`), identity and place
   (`src/identity.rs`), the hook (`src/hook.rs`), the command (`src/main.rs`) and the server
   (`src/server.rs`, `focus-board serve`), with their tests (`tests/store.rs`, `tests/command.rs`,
-  `tests/server.rs`). Step 5, the page (`src/page.html`), is a first draft: its script parses
-  (`node --check`), but it has not been run in a browser yet.
+  `tests/server.rs`). Step 5, the page (`src/page.html`), runs in a real browser:
+  `checks/page-check.sh` drives a headless Firefox through it (11 checks).
+- The first review (`~/temp/focus-board/`, 2026-11-21) is answered on branch `review-1`. Step 6,
+  installing, is next.
 - The command is installed with `cargo install --path . --locked` (on `PATH` from
   `~/.cargo/bin`). The hook runs that installed copy from this project's gitignored
   `.claude/settings.local.json`, never the build in `target/`, which every build and test run
@@ -35,6 +37,14 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - Try the command on a scratch board: `FOCUS_BOARD_DB=<scratch path> focus-board whoami`. Without
   `FOCUS_BOARD_DB` it writes to the real board, where nothing can be deleted.
 - **Test:** `cargo test`. Lint: `cargo clippy --all-targets`, `cargo fmt --check`.
+- **Checks** beyond `cargo test`, in `checks/`:
+  - `break-it.sh`: removes each rule in a scratch copy, and its test must then fail. Run it before
+    committing a step, and add a line for every new rule.
+  - `page-check.sh [BIN]`: the page in a headless Firefox, on a scratch board.
+  - `demo-board.sh BIN DIR`: a scratch board with demo items, for looking at the page:
+    `FOCUS_BOARD_DB=DIR/board.sqlite BIN serve`.
+- Test boards set writers through `FOCUS_BOARD_*` in scripts and tests only. A session's own
+  Bash command never sets them: the hook denies it (review R1).
 - **Stack: Rust and SQLite, one program** (owner, 2026-11-21). The server serves the page; the
   command opens the database directly, each write in its own transaction.
   - Considered and dropped: PostgreSQL (a service to run), append-only files (version checks need
@@ -46,7 +56,8 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 
 ## Open choices — the owner's call, not yet made
 
-- None left from the first session.
+- ❓ Session forks (`/branch`, `--fork-session`): find where one names its parent, or defer
+  (review R3; `DESIGN.md`, "Open").
 
 ## Session identity (owner, 2026-11-21)
 
@@ -56,8 +67,9 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - Seen in a main session's shell (2026-11-21): `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID`. Not
   seen: the session's name, an agent id, a parent (fork) id. Project and workspace come from the
   working directory's git top level.
-- Not checked: what a fork's or subagent's shell or hook sees. A subagent test was blocked by the
-  auto-mode check, and the owner chose the hook instead.
+- Checked (2026-11-21): a subagent's hook input holds the parent's `session_id` plus its own
+  `agent_id` and `agent_type`. Not checked: an Agent-tool fork, and a `/branch` or
+  `--fork-session` fork, which gets a new session id with no parent known (review R3).
 
 ## Machine resources (owner, 2026-11-21)
 

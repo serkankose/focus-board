@@ -17,8 +17,8 @@ type Who<'a> = Option<(&'a str, &'a str, &'a str)>;
 impl Board {
     fn new() -> Board {
         let dir = tempfile::tempdir().unwrap();
-        for d in ["work", "elsewhere"] {
-            std::fs::create_dir(dir.path().join(d)).unwrap();
+        for d in ["work", "elsewhere", "one/same", "two/same"] {
+            std::fs::create_dir_all(dir.path().join(d)).unwrap();
         }
         Board { dir }
     }
@@ -112,11 +112,55 @@ fn unidentified_command_write_refused() {
             "{args:?}: {}",
             stderr(&out)
         );
+        // The refusal must not invite setting the variable by hand (review R1).
+        assert!(
+            stderr(&out).contains("Never set FOCUS_BOARD_* yourself")
+                && stderr(&out).contains("first word"),
+            "{args:?}: {}",
+            stderr(&out)
+        );
     }
     assert_eq!(
         board.json(&["list", "--everywhere", "--all", "--json"]),
         Value::Array(vec![])
     );
+}
+
+/// Review R1: a command that sets the identity variables itself would override the hook's export,
+/// and the value at hand is a subagent's parent's id. The hook denies it, whatever the command,
+/// and never denies a command that only mentions a variable.
+#[test]
+fn hook_denies_a_hand_set_identity() {
+    for command in [
+        "FOCUS_BOARD_SESSION=x focus-board add q",
+        "export FOCUS_BOARD_AGENT=; focus-board list",
+        "timeout 5 env FOCUS_BOARD_SESSION=$CLAUDE_CODE_SESSION_ID focus-board add q",
+        "FOCUS_BOARD_AGENT_TYPE=fork true",
+    ] {
+        let out = hook(&bash_input(
+            "sess-1",
+            Some(("ag-1", "general-purpose")),
+            command,
+        ));
+        assert!(out.status.success(), "the hook failed on {command}");
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+        let decision = &reply["hookSpecificOutput"];
+        assert_eq!(decision["permissionDecision"], "deny", "{command}: {reply}");
+        assert!(
+            decision["permissionDecisionReason"]
+                .as_str()
+                .is_some_and(|r| r.contains("first word")),
+            "{reply}"
+        );
+        assert!(decision.get("updatedInput").is_none(), "{reply}");
+    }
+    for command in [
+        "grep -rn FOCUS_BOARD_SESSION src/",
+        "echo $FOCUS_BOARD_AGENT",
+    ] {
+        let out = hook(&bash_input("sess-1", None, command));
+        assert!(out.stdout.is_empty(), "{command} was not left alone");
+    }
 }
 
 fn hook(input: &str) -> Output {
@@ -335,4 +379,41 @@ fn command_round_trip() {
         "history is in the order written"
     );
     assert!(board.run(None, &["show", "B99"]).status.code() == Some(1));
+}
+
+/// Review R6: two projects can share a folder name, and projects never mix, so a name that fits
+/// more than one is refused with the paths to choose from; a path picks exactly one.
+#[test]
+fn a_shared_folder_name_does_not_mix_projects() {
+    let board = Board::new();
+    // Two sessions: a writer's project is fixed at its first write.
+    for (session, cwd) in [("sess-1", "one/same"), ("sess-2", "two/same")] {
+        let out = board.run_in(
+            Some((session, "", "")),
+            cwd,
+            &["add", &format!("raised in {cwd}")],
+        );
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    let both = board.run(None, &["list", "--project", "same", "--json"]);
+    assert_eq!(both.status.code(), Some(1), "an ambiguous name was taken");
+    assert!(
+        stderr(&both).contains("names 2 projects"),
+        "{}",
+        stderr(&both)
+    );
+
+    let one = board.dir.path().join("one/same").canonicalize().unwrap();
+    let out = board.run(
+        None,
+        &["list", "--project", one.to_str().unwrap(), "--json"],
+    );
+    let listed: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let questions: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["question"].as_str().unwrap())
+        .collect();
+    assert_eq!(questions, vec!["raised in one/same"]);
 }

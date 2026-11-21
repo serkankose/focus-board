@@ -109,6 +109,30 @@ fn request(
     headers: &[(&str, String)],
     body: Option<&str>,
 ) -> (u16, Value) {
+    let response = raw_request(port, method, path, headers, body);
+    let status = response
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let text = response
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b)
+        .unwrap_or("");
+    (
+        status,
+        serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.into())),
+    )
+}
+
+/// The whole response, status line and headers included.
+fn raw_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: Option<&str>,
+) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     let mut req = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\n");
     for (k, v) in headers {
@@ -125,19 +149,34 @@ fn request(
     stream.write_all(req.as_bytes()).unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
-    let status = response
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let text = response
-        .split_once("\r\n\r\n")
-        .map(|(_, b)| b)
-        .unwrap_or("");
-    (
-        status,
-        serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.into())),
-    )
+    response
+}
+
+/// Review R2: no other page may frame the board, or a lured click could pass the guard as the
+/// board's own write. Every response says so, refusals included.
+#[test]
+fn page_cannot_be_framed() {
+    let board = Board::start();
+    let good = [("Host", board.host())];
+    let foreign = [("Host", "evil.example".to_string())];
+    for (path, headers) in [
+        ("/", &good),
+        ("/api/items", &good),
+        ("/api/items", &foreign),
+    ] {
+        let head = raw_request(board.port, "GET", path, headers, None).to_ascii_lowercase();
+        let head = head.split("\r\n\r\n").next().unwrap_or("");
+        for needed in [
+            "x-frame-options: deny",
+            "content-security-policy: frame-ancestors 'none'",
+            "x-content-type-options: nosniff",
+        ] {
+            assert!(
+                head.contains(needed),
+                "{path} {headers:?} lacks {needed}:\n{head}"
+            );
+        }
+    }
 }
 
 fn owner_answers(store: &Store) -> usize {
@@ -408,4 +447,42 @@ fn serve_binds_loopback_only() {
     assert!(port != 0, "serve printed {first:?}");
     assert_eq!(code, 200);
     assert!(page.as_str().unwrap_or("").contains("focus-board"));
+}
+
+/// Review R8: the timeline is cut to its newest rows and says how many there are; the items can be
+/// narrowed to the ones not closed on the server.
+#[test]
+fn timeline_is_cut_and_says_so() {
+    let board = Board::start();
+    let (_, full) = board.get("/api/timeline");
+    let total = full["total"].as_i64().unwrap();
+    assert!(total >= 4, "{full}");
+    assert_eq!(
+        full["entries"].as_array().unwrap().len() as i64,
+        total,
+        "the default cut is above this board"
+    );
+    let (_, cut) = board.get("/api/timeline?limit=2");
+    let seqs: Vec<i64> = cut["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["seq"].as_i64().unwrap())
+        .collect();
+    let all: Vec<i64> = full["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["seq"].as_i64().unwrap())
+        .collect();
+    assert_eq!(seqs, all[all.len() - 2..].to_vec());
+    assert_eq!(cut["total"], json!(total));
+
+    board.post("/api/status", json!({ "item": 1, "status": "closed" }));
+    let (_, active) = board.get("/api/items?status=active");
+    assert_eq!(
+        active["items"],
+        json!([]),
+        "a closed item left the active list"
+    );
 }

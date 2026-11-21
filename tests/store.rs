@@ -6,7 +6,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use focus_board::identity::{Identity, IdentityError, Place};
-use focus_board::store::{Field, Filter, NewItem, OWNER, Store, WriteError};
+use focus_board::store::{Field, Filter, LAYOUT, NewItem, OWNER, OpenError, Store, WriteError};
 use serde_json::json;
 
 fn board() -> (tempfile::TempDir, PathBuf) {
@@ -337,7 +337,7 @@ fn fork_in_tree_and_timeline_order() {
         ..Filter::default()
     };
     let feedback_order: Vec<(i64, serde_json::Value)> = store
-        .timeline(&branch, 0)
+        .timeline(&branch, 0, None)
         .unwrap()
         .into_iter()
         .filter(|c| c.field == "feedback")
@@ -352,7 +352,7 @@ fn fork_in_tree_and_timeline_order() {
         writer: Some(f),
         ..Filter::default()
     };
-    let fork_rows = store.timeline(&fork_only, 0).unwrap();
+    let fork_rows = store.timeline(&fork_only, 0, None).unwrap();
     assert!(fork_rows.iter().all(|c| c.writer == f) && fork_rows.len() == 1);
 
     // The owner's answer on the parent's item belongs to the parent's branch, not the fork's.
@@ -361,7 +361,7 @@ fn fork_in_tree_and_timeline_order() {
         .unwrap();
     let in_branch = |filter: &Filter| {
         store
-            .timeline(filter, 0)
+            .timeline(filter, 0, None)
             .unwrap()
             .iter()
             .any(|c| c.writer == OWNER && c.field == "answer")
@@ -659,4 +659,124 @@ fn status_is_the_last_written_of_author_and_owner() {
         ..Filter::default()
     };
     assert!(store.items(&open).unwrap().is_empty());
+}
+
+/// Review R10: options become a map, so a repeated letter would silently keep only its last text.
+#[test]
+fn a_repeated_option_letter_is_refused() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let twice = NewItem {
+        question: "q".into(),
+        options: vec![("a".into(), "keep".into()), ("a".into(), "drop".into())],
+        ..NewItem::default()
+    };
+    let refused = store.add_item(&session("s"), &place("p", "p"), &twice);
+    assert!(
+        matches!(&refused, Err(WriteError::BadValue(why)) if why.contains("twice")),
+        "{refused:?}"
+    );
+    assert!(
+        store.items(&Filter::default()).unwrap().is_empty(),
+        "nothing was raised"
+    );
+}
+
+/// Review G8: only the item's author writes its question, options and recommendation.
+#[test]
+fn only_the_author_writes_the_question() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let here = place("p", "p");
+    let item = store
+        .add_item(&session("author"), &here, &question("q"))
+        .unwrap();
+    for (field, value) in [
+        (Field::Question, json!("rewritten")),
+        (Field::Options, json!({ "a": "other" })),
+        (Field::Recommended, json!("b")),
+    ] {
+        let wrote =
+            store.write_as_session(&session("someone-else"), &here, item, field, &value, None);
+        assert!(
+            matches!(wrote, Err(WriteError::NotYours(_))),
+            "{field:?}: {wrote:?}"
+        );
+    }
+    let agent_of_author = agent("author", "a1", "general-purpose");
+    let wrote = store.write_as_session(
+        &agent_of_author,
+        &here,
+        item,
+        Field::Question,
+        &json!("x"),
+        None,
+    );
+    assert!(
+        matches!(wrote, Err(WriteError::NotYours(_))),
+        "even the author's own subagent: {wrote:?}"
+    );
+}
+
+/// Review R11: the board's layout version is kept, and a newer one is refused, not misread.
+#[test]
+fn a_newer_layout_is_refused() {
+    let (_dir, db) = board();
+    drop(Store::open(&db).unwrap());
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    let version: i64 = raw
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, LAYOUT, "a new board records its layout");
+    raw.pragma_update(None, "user_version", LAYOUT + 1).unwrap();
+    drop(raw);
+    match Store::open(&db) {
+        Err(OpenError::NewerLayout(v)) => assert_eq!(v, LAYOUT + 1),
+        Err(other) => panic!("wrong refusal: {other}"),
+        Ok(_) => panic!("a newer layout was opened"),
+    }
+}
+
+/// Review R8: the timeline can keep only its newest rows, still in the order written, and says
+/// how many there are; the items can be narrowed to the ones not closed.
+#[test]
+fn timeline_cut_and_active_filter() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let (me, here) = (session("s"), place("p", "p"));
+    let item = store.add_item(&me, &here, &question("q")).unwrap();
+    for n in 1..=5 {
+        store
+            .write_as_session(
+                &me,
+                &here,
+                item,
+                Field::Feedback,
+                &feedback(&n.to_string()),
+                None,
+            )
+            .unwrap();
+    }
+    let all = store.timeline(&Filter::default(), 0, None).unwrap();
+    let newest = store.timeline(&Filter::default(), 0, Some(2)).unwrap();
+    assert_eq!(
+        newest,
+        all[all.len() - 2..].to_vec(),
+        "the newest two, oldest of them first"
+    );
+    assert_eq!(
+        store.timeline_len(&Filter::default()).unwrap(),
+        all.len() as i64
+    );
+
+    let closed = store.add_item(&me, &here, &question("done")).unwrap();
+    store
+        .write_as_session(&me, &here, closed, Field::Status, &json!("closed"), None)
+        .unwrap();
+    let active = Filter {
+        status: Some("active".into()),
+        ..Filter::default()
+    };
+    let ids: Vec<i64> = store.items(&active).unwrap().iter().map(|i| i.id).collect();
+    assert_eq!(ids, vec![item]);
 }

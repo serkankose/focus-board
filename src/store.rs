@@ -84,8 +84,52 @@ CREATE TRIGGER IF NOT EXISTS writers_only_append BEFORE INSERT ON writers
     WHEN EXISTS (SELECT 1 FROM writers WHERE id = NEW.id
                  OR (session_id = NEW.session_id AND agent_id = NEW.agent_id))
     BEGIN SELECT RAISE(ABORT, 'a writer is never replaced'); END;
+PRAGMA user_version = 1;
 COMMIT;
 "#;
+
+/// The board's layout version, kept in SQLite's `user_version` and set by [`SCHEMA`]. A board
+/// written by a newer focus-board is refused rather than read with the wrong layout. Since the
+/// triggers forbid changing rows in place, a layout change is a new version (review R11).
+pub const LAYOUT: i64 = 1;
+
+/// The rows a timeline draws from: `?1` after this row, `?2` project, `?3` workspace, `?4` node.
+/// A node's timeline holds the writes on the items raised in that branch, whoever made them (the
+/// owner's answers included), and the branch's own writes on other items.
+const TIMELINE_ROWS: &str = "FROM cells c JOIN items i ON i.id = c.item
+     JOIN writers a ON a.id = i.author JOIN writers w ON w.id = c.writer
+     WHERE c.id > ?1
+       AND (?2 IS NULL OR a.project = ?2)
+       AND (?3 IS NULL OR a.workspace = ?3)
+       AND (?4 IS NULL OR a.id = ?4 OR a.parent = ?4 OR w.id = ?4 OR w.parent = ?4)";
+
+#[derive(Debug)]
+pub enum OpenError {
+    Db(rusqlite::Error),
+    /// The board's layout is newer than this program knows.
+    NewerLayout(i64),
+}
+
+impl fmt::Display for OpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OpenError::Db(e) => write!(f, "database: {e}"),
+            OpenError::NewerLayout(v) => write!(
+                f,
+                "the board's layout is version {v}, and this focus-board knows only up to \
+                 version {LAYOUT}: update focus-board"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for OpenError {}
+
+impl From<rusqlite::Error> for OpenError {
+    fn from(e: rusqlite::Error) -> Self {
+        OpenError::Db(e)
+    }
+}
 
 /// Which way a write came in. The owner writes only through the page, sessions only through the
 /// command.
@@ -251,6 +295,7 @@ pub struct Filter {
     pub workspace: Option<String>,
     /// A node of the tree: this writer and the agents under it.
     pub writer: Option<WriterId>,
+    /// `open`, `answered`, `closed`, or `active` for anything not closed.
     pub status: Option<String>,
 }
 
@@ -259,9 +304,13 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn open(path: &Path) -> Result<Store, rusqlite::Error> {
+    pub fn open(path: &Path) -> Result<Store, OpenError> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(Duration::from_secs(10))?;
+        let layout: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if layout > LAYOUT {
+            return Err(OpenError::NewerLayout(layout));
+        }
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0))?;
         // In WAL mode NORMAL keeps every commit safe from a crash of the program; only a power
         // cut can lose the last few. Fine for a board, and it keeps a write to about a millisecond.
@@ -279,6 +328,17 @@ impl Store {
         place: &Place,
         new: &NewItem,
     ) -> Result<ItemId, WriteError> {
+        // Options become a map, where a repeated letter would silently keep only its last text.
+        let mut letters = std::collections::HashSet::new();
+        if let Some((letter, _)) = new
+            .options
+            .iter()
+            .find(|(k, _)| !letters.insert(k.as_str()))
+        {
+            return Err(WriteError::BadValue(format!(
+                "option {letter} is given twice"
+            )));
+        }
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -485,17 +545,38 @@ impl Store {
     /// Every write after `after`, in the order written, narrowed by the filter's place and node.
     /// A node's timeline holds the writes on the items raised in that branch, whoever made them
     /// (the owner's answers included), and the branch's own writes on other items.
-    pub fn timeline(&self, filter: &Filter, after: i64) -> Result<Vec<Cell>, rusqlite::Error> {
-        self.cells(
+    /// `newest` keeps only that many of the latest rows, still in the order written.
+    pub fn timeline(
+        &self,
+        filter: &Filter,
+        after: i64,
+        newest: Option<i64>,
+    ) -> Result<Vec<Cell>, rusqlite::Error> {
+        let sql = format!(
             "SELECT c.id, c.item, c.writer, c.field, c.version, c.value, c.client, c.written_at
-             FROM cells c JOIN items i ON i.id = c.item JOIN writers a ON a.id = i.author
-             JOIN writers w ON w.id = c.writer
-             WHERE c.id > ?1
-               AND (?2 IS NULL OR a.project = ?2)
-               AND (?3 IS NULL OR a.workspace = ?3)
-               AND (?4 IS NULL OR a.id = ?4 OR a.parent = ?4 OR w.id = ?4 OR w.parent = ?4)
-             ORDER BY c.id",
-            params![after, filter.project, filter.workspace, filter.writer],
+             {TIMELINE_ROWS} ORDER BY c.id DESC LIMIT ?5"
+        );
+        let mut rows = self.cells(
+            &sql,
+            params![
+                after,
+                filter.project,
+                filter.workspace,
+                filter.writer,
+                newest.unwrap_or(-1)
+            ],
+        )?;
+        rows.reverse();
+        Ok(rows)
+    }
+
+    /// How many rows the timeline holds for this filter, before any `newest` cut.
+    pub fn timeline_len(&self, filter: &Filter) -> Result<i64, rusqlite::Error> {
+        let sql = format!("SELECT COUNT(*) {TIMELINE_ROWS}");
+        self.conn.query_row(
+            &sql,
+            params![0, filter.project, filter.workspace, filter.writer],
+            |r| r.get(0),
         )
     }
 
@@ -546,7 +627,10 @@ impl Store {
         )?;
         let mut items: Vec<ItemSummary> = rows.collect::<Result<_, _>>()?;
         if let Some(status) = &filter.status {
-            items.retain(|i| &i.status == status);
+            items.retain(|i| match status.as_str() {
+                "active" => i.status != "closed",
+                wanted => i.status == wanted,
+            });
         }
         Ok(items)
     }

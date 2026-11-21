@@ -32,7 +32,9 @@ impl fmt::Display for IdentityError {
             IdentityError::Missing => write!(
                 f,
                 "no {SESSION_VAR}: the focus-board hook did not run for this command, so it cannot \
-                 say who is writing"
+                 say who is writing. Run focus-board as the first word of the Bash command, so \
+                 the hook can add your identity. Never set FOCUS_BOARD_* yourself: a subagent \
+                 would write as its parent. Without the hook installed, ask the owner."
             ),
             IdentityError::Malformed(var) => write!(f, "{var} holds characters an id never has"),
         }

@@ -1,7 +1,8 @@
 # focus-board — design
 
-Draft, 2026-11-21, for the owner's approval before any code. [BRIEF.md](BRIEF.md) is the
-requirement; this says how. Items marked **unverified** are guesses until the spike runs.
+Approved by the owner on 2026-11-21, before any code, and kept in step with it since.
+[BRIEF.md](BRIEF.md) is the requirement; this says how. Items marked **unverified** have not been
+seen to work yet.
 
 ## One program
 
@@ -84,6 +85,12 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
 - **No identity, no write.** Without `FOCUS_BOARD_SESSION`, the command reads but refuses to write.
   It never falls back to `CLAUDE_CODE_SESSION_ID`: a subagent would then write into its parent's
   cells, which is exactly the brief's fork test failing silently.
+- **Nobody sets the identity by hand** (review R1). A command that assigns `FOCUS_BOARD_SESSION`,
+  `FOCUS_BOARD_AGENT` or `FOCUS_BOARD_AGENT_TYPE` itself would override the hook's export, and the
+  value at hand is a subagent's parent's id. The hook checks every Bash command and denies such a
+  one (`permissionDecision: deny`); this only tightens. The refusal for a missing identity says to
+  run `focus-board` as the first word, and never to set the variables. `runs_board` sees through
+  `env`, `exec`, `command`, `time`, `nohup`, `nice`, `timeout N`, `!` and shell keywords.
 - **Parents.** An Agent-tool fork or subagent has its parent's session id and its own agent id, so
   its parent is that session's writer. Seen for a subagent; **unverified** for an Agent-tool fork
   (`subagent_type: fork`), which is expected to behave the same. A session forked with `/branch` or `--fork-session` gets a new session id, and where its
@@ -160,6 +167,13 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(added)* The page's answer and status, the version check, no route for a session's cell | `page_answers_and_reads` |
 | *(added)* The page sees writes made past the server: change feed, tree, branch timeline | `page_sees_writes_made_past_it` |
 | *(added)* `focus-board serve` binds 127.0.0.1 only and serves the page | `serve_binds_loopback_only` |
+| *(review R1)* A hand-set identity is denied; the refusal says not to set it | `hook_denies_a_hand_set_identity`, `sets_identity_finds_assignments_only` (unit), `unidentified_command_write_refused` |
+| *(review R2)* No page can frame the board | `page_cannot_be_framed`, and `checks/page-check.sh` frames it in a real browser |
+| *(review R6)* A shared folder name does not mix projects | `a_shared_folder_name_does_not_mix_projects` |
+| *(review R8)* The timeline is cut and says so; active items on the server | `timeline_is_cut_and_says_so`, `timeline_cut_and_active_filter` |
+| *(review R10, R11, G8)* Repeated letters, a newer layout, the author-only question | `a_repeated_option_letter_is_refused`, `a_newer_layout_is_refused`, `only_the_author_writes_the_question` |
+| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 11 checks in headless Firefox |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 34 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next
@@ -184,11 +198,15 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
    `focus-board serve` that starts at login and restarts after a crash (owner, 2026-11-21).
    Before calling it done, run one board command from a session that is not in auto mode: the
    rewritten command starts with `export …;`, so an allow rule such as `Bash(focus-board:*)` may
-   stop matching and every board call may prompt.
+   stop matching and every board call may prompt. The unit sends the server's stderr (startup and
+   refused requests) to `%S/focus-board/serve.log`, which is `~/.local/state/focus-board/`, the
+   log folder the owner chose (review R5).
 
 ## Open, the owner's call
 
-- ❓ Approval of this design as a whole.
+- ❓ Session forks (`/branch`, `--fork-session`) get a new session id and show as sessions of their
+  own, not under their parent as the brief asks (review R3): find where a fork names its parent,
+  or defer.
 
 ## Accepted for now
 
@@ -196,3 +214,16 @@ logic, not that Claude Code's hook delivers the ids. That part is checked once i
   write.
 - A subagent of a subagent is filed under the session, not under its own parent, unless the hook
   input turns out to carry the parent agent's id.
+- A subagent whose session has not written yet creates the session's row with the subagent's own
+  place, so a subagent in its own worktree files its parent under that worktree (review R12).
+- `whoami --name` changes a writer's name in place; a name is a label, not a cell.
+
+## Also from review 02
+
+- Every response forbids framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), so a framed
+  board's own writes cannot be clicked from another page (R2).
+- `list --project NAME` takes a path, or a folder name that fits exactly one project (R6).
+- The timeline answers its newest `limit` rows (default 300) with the total; the page says what it
+  left out. `/api/items?status=active` leaves closed items out on the server (R8).
+- A repeated option letter is refused (R10). The board's layout version is kept in
+  `user_version`, and a newer one is refused (R11).

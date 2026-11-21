@@ -306,6 +306,29 @@ fn item_json(i: &ItemSummary, writers: &[Writer]) -> Value {
     })
 }
 
+/// The one project whose path is `name`, or whose folder is called `name`. Two projects can share
+/// a folder name (`~/dev/x`, `~/temp/x`), and projects never mix, so such a name is refused with
+/// the paths to choose from (review R6).
+fn one_project_named(writers: &[Writer], name: &str) -> Result<String, String> {
+    let mut projects: Vec<&str> = writers
+        .iter()
+        .filter(|w| w.kind == "session")
+        .map(|w| w.project.as_str())
+        .filter(|p| *p == name || folder(p) == name)
+        .collect();
+    projects.sort_unstable();
+    projects.dedup();
+    match projects[..] {
+        [] => Ok(name.to_string()),
+        [one] => Ok(one.to_string()),
+        _ => Err(format!(
+            "{name:?} names {} projects; give the path of one: {}",
+            projects.len(),
+            projects.join(", ")
+        )),
+    }
+}
+
 fn list(
     project: Option<String>,
     everywhere: bool,
@@ -329,13 +352,10 @@ fn list(
                 .canonicalize()
                 .map(|c| c.to_string_lossy().into_owned())
                 .unwrap_or(p),
-            Some(p) => p,
+            Some(name) => one_project_named(&writers, &name)?,
             None => here()?.project,
         };
-        items.retain(|i| {
-            let p = project_of(i);
-            p == wanted || folder(&p) == wanted
-        });
+        items.retain(|i| project_of(i) == wanted);
     }
     match status {
         Some(s) => items.retain(|i| i.status == s),

@@ -108,7 +108,7 @@ dialog ol { padding-left: 18px; }
 
 const POLL_MS = 2000;
 const TIMELINE_MAX = 300;
-const state = { last: 0, writers: new Map(), owner: null, items: [], node: null, drafts: new Map(), busy: false };
+const state = { last: 0, writers: new Map(), owner: null, items: [], node: null, drafts: new Map(), notes: new Map(), busy: false, again: false };
 const $ = (id) => document.getElementById(id);
 
 function el(tag, attrs, ...children) {
@@ -164,16 +164,20 @@ function query() {
   const p = new URLSearchParams();
   const n = state.node;
   if (n) p.set(n.kind, n.value);
+  const status = $("status").value;
+  if (status !== "all") p.set("status", status);
   return p.toString();
 }
 
 async function refresh() {
-  if (state.busy) return;
+  // A refresh asked for while one runs (a click on the tree, say) runs right after it.
+  if (state.busy) { state.again = true; return; }
   state.busy = true;
   try {
     const q = query();
     const [tree, items, timeline] = await Promise.all([
-      getJSON("/api/tree"), getJSON("/api/items?" + q), getJSON("/api/timeline?" + q),
+      getJSON("/api/tree"), getJSON("/api/items?" + q),
+      getJSON("/api/timeline?" + q + "&limit=" + TIMELINE_MAX),
     ]);
     state.writers = new Map(tree.writers.map((w) => [w.id, w]));
     state.owner = tree.writers.find((w) => w.kind === "owner")?.id ?? null;
@@ -183,12 +187,13 @@ async function refresh() {
     renderProjects();
     renderTree();
     keepFocus(renderItems);
-    renderTimeline(timeline.entries);
+    renderTimeline(timeline.entries, timeline.total);
     setLive(null);
   } catch (e) {
     setLive(e.message);
   } finally {
     state.busy = false;
+    if (state.again) { state.again = false; refresh(); }
   }
 }
 
@@ -260,8 +265,14 @@ function renderTree() {
   const sessionNode = (s) => node("writer", s.id, s.label, s.session_id, clock(s.last_at),
     agentsOf(s).map((a) => node("writer", a.id, a.label.replace(/ in \S+$/, ""), a.agent_id, clock(a.last_at))));
   const tops = sessions.filter((s) => !s.agent_id);
-  const projects = group(tops, (s) => s.project).map(([project, list]) => node("project", project, folder(project), project, null,
-    group(list, (s) => s.workspace).map(([ws, ss]) => node("workspace", ws, folder(ws), ws, null, ss.map(sessionNode)))));
+  const projects = group(tops, (s) => s.project).map(([project, list]) => {
+    const workspaces = group(list, (s) => s.workspace);
+    // A project whose only workspace is the project folder itself needs no workspace level.
+    const children = workspaces.length === 1 && workspaces[0][0] === project
+      ? workspaces[0][1].map(sessionNode)
+      : workspaces.map(([ws, ss]) => node("workspace", ws, folder(ws), ws, null, ss.map(sessionNode)));
+    return node("project", project, folder(project), project, null, children);
+  });
   $("tree").replaceChildren(
     el("li", {}, el("button", { class: "node" + (state.node ? "" : " selected"), onclick: () => select(null) }, "whole board")),
     ...projects);
@@ -322,13 +333,16 @@ function itemRow(item, depth) {
 function statusCell(item) {
   const mine = state.owner == null ? null : cell(item, state.owner, "status");
   const next = item.status === "closed" ? "open" : "closed";
-  const msg = el("div", { class: "msg" });
+  const msg = el("div", { class: "msg" }, state.notes.get(item.id) || "");
   return el("div", {},
     el("span", { class: "chip st-" + item.status }, item.status),
     el("div", { style: "margin-top:6px" },
       el("button", { onclick: async () => {
         const r = await postJSON("/api/status", { item: item.id, status: next, expect: mine ? mine.version : 0 });
-        if (r.ok) refresh(); else msg.textContent = refusal(r);
+        if (r.ok) state.notes.delete(item.id);
+        else state.notes.set(item.id, refusal(r));
+        // After a refusal too: the page shows at once what changed elsewhere.
+        refresh();
       } }, next === "closed" ? "Close" : "Reopen")),
     msg);
 }
@@ -344,8 +358,9 @@ function answerEditor(item, options) {
   const value = saved ? saved.value : {};
   const draft = state.drafts.get(item.id);
   const shownValue = draft || { pick: value.pick || "", text: value.text || "", base: version };
-  const msg = el("div", { class: "msg" }, draft && draft.error ? draft.error : "");
-  if (draft && draft.base !== version) msg.textContent = "Your answer changed elsewhere since you started. Discard to see it.";
+  // A refusal stays until the owner edits again; then the note that the answer moved shows.
+  const msg = el("div", { class: "msg" }, draft && draft.error ? draft.error
+    : draft && draft.base !== version ? "Your answer changed elsewhere since you started. Discard to see it." : "");
   const save = el("button", { disabled: !draft }, "Save");
   const discard = el("button", { class: "link", hidden: !draft, onclick: () => { state.drafts.delete(item.id); keepFocus(renderItems); } }, "discard");
   const edit = (change) => {
@@ -365,7 +380,12 @@ function answerEditor(item, options) {
     save.disabled = true;
     const r = await postJSON("/api/answer", { item: item.id, answer, expect: d.base });
     if (r.ok) { state.drafts.delete(item.id); refresh(); }
-    else { d.error = refusal(r); msg.textContent = d.error; save.disabled = false; }
+    else {
+      d.error = refusal(r);
+      msg.textContent = d.error;
+      save.disabled = false;
+      if (r.status === 409) refresh();  // show at once what changed elsewhere
+    }
   });
   const name = "pick-" + item.id;
   const picks = Object.keys(options).map((k) => el("label", { title: options[k] },
@@ -390,8 +410,8 @@ function describe(e) {
   return "set " + e.field + (e.field === "question" ? ": " + shown(e.value) : "");
 }
 
-function renderTimeline(entries) {
-  const recent = entries.slice(-TIMELINE_MAX).reverse();
+function renderTimeline(entries, total) {
+  const recent = entries.slice().reverse();
   $("timeline").replaceChildren(...recent.map((e) => {
     const w = writer(e.writer);
     return el("li", {},
@@ -402,6 +422,7 @@ function renderTimeline(entries) {
       w && w.kind === "session" ? el("span", { class: "muted" }, " · " + place(w)) : null);
   }));
   if (!recent.length) $("timeline").replaceChildren(el("li", { class: "muted" }, "nothing written here yet"));
+  else if (total > recent.length) $("timeline").append(el("li", { class: "muted" }, "newest " + recent.length + " of " + total + " shown"));
 }
 
 async function showHistory(itemId, writerId, field) {
@@ -419,7 +440,7 @@ async function showHistory(itemId, writerId, field) {
 }
 
 $("project").addEventListener("change", (e) => select(e.target.value ? "project" : null, e.target.value));
-$("status").addEventListener("change", () => keepFocus(renderItems));
+$("status").addEventListener("change", () => refresh());
 refresh();
 setInterval(poll, POLL_MS);
 </script>

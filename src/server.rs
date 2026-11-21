@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Query, Request, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -24,6 +24,11 @@ pub const PORT: u16 = 8810;
 pub const WRITE_HEADER: &str = "x-focus-board";
 
 const PAGE: &str = include_str!("page.html");
+
+/// How many timeline rows one answer holds by default, and at most. Nothing is ever deleted, so
+/// without a cut every refresh would ship the whole history (review R8). A display cut only.
+pub const TIMELINE_DEFAULT: i64 = 300;
+pub const TIMELINE_MAX: i64 = 5000;
 
 #[derive(Clone)]
 struct App {
@@ -54,7 +59,24 @@ fn router(app: App) -> Router {
         .route("/api/answer", post(answer))
         .route("/api/status", post(status))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
+        .layer(middleware::map_response(never_framed))
         .with_state(app)
+}
+
+/// No other page may frame the board: a framed board's own writes would pass the guard, so a
+/// lured click could answer or close an item (review R2). Set on every response, refusals too.
+async fn never_framed(mut res: Response) -> Response {
+    let headers = res.headers_mut();
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("frame-ancestors 'none'"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    res
 }
 
 async fn guard(State(app): State<App>, req: Request, next: Next) -> Response {
@@ -247,19 +269,25 @@ async fn tree(State(app): State<App>) -> ApiResult {
     .await
 }
 
-/// Every write after `after`, in the order written, narrowed by place and node.
+/// The newest `limit` writes after `after` (default [`TIMELINE_DEFAULT`]), in the order written,
+/// narrowed by place and node, with the total so the page can say what it left out.
 async fn timeline(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> ApiResult {
     let filter = filter(&q)?;
     let after = number(&q, "after")?.unwrap_or(0);
+    let limit = number(&q, "limit")?
+        .unwrap_or(TIMELINE_DEFAULT)
+        .clamp(1, TIMELINE_MAX);
     on_store(&app, move |store| {
         let entries: Vec<Value> = store
-            .timeline(&filter, after)?
+            .timeline(&filter, after, Some(limit))?
             .iter()
             .map(cell_json)
             .collect();
-        Ok(Json(
-            json!({ "last": store.last_seq()?, "entries": entries }),
-        ))
+        Ok(Json(json!({
+            "last": store.last_seq()?,
+            "total": store.timeline_len(&filter)?,
+            "entries": entries,
+        })))
     })
     .await
 }

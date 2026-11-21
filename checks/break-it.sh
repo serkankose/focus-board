@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Break-it checks: each rule is removed, one at a time, in a scratch copy of the source, and the
+# test that claims the rule must then fail. The source folder is never changed.
+#
+# Usage: checks/break-it.sh [SOURCE_DIR]      (default: this repo, as its working tree stands)
+# Output: one line per check. "fails (good)" is the wanted result; anything else is a finding.
+# Exit: 0 when every check failed its test as it should, 1 otherwise.
+set -uo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+src=${1:-$here/..}
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+tar -C "$src" --exclude=./target --exclude=./.git -cf - . | tar -C "$work" -xf -
+cd "$work" || exit 1
+mkdir .pristine && cp -r src .pristine/
+
+echo "source: $src"
+echo "building and testing the unchanged copy first..."
+cargo build -q --tests 2>/dev/null || { echo "the unchanged copy does not build"; exit 1; }
+cargo test -q >/dev/null 2>&1 || { echo "the unchanged copy fails its tests"; exit 1; }
+
+status=0
+# check NAME FILE TEST_FILE TEST_NAME PERL_SUBSTITUTION
+check() {
+    local name=$1 file=$2 tfile=$3 tname=$4 expr=$5
+    cp -r .pristine/src/. src/
+    perl -0pi -e "$expr" "src/$file"
+    if cmp -s ".pristine/src/$file" "src/$file"; then
+        echo "NOT APPLIED   $name"; status=1; return
+    fi
+    if ! cargo build -q --tests 2>/dev/null; then
+        echo "NO BUILD      $name"; status=1; return
+    fi
+    if cargo test -q --test "$tfile" "$tname" >/dev/null 2>&1; then
+        echo "STILL PASSES  $name   ($tfile::$tname)"; status=1
+    else
+        echo "fails (good)  $name   ($tfile::$tname)"
+    fi
+}
+
+# The store: versions, ownership, transactions, history kept by triggers.
+check "no version check"            store.rs store stale_version_refused 's/&& read != current/&& false/'
+check "cells may be updated"        store.rs store update_and_delete_refused 's/cells are never changed\x27\); END;/cells are never changed\x27) WHERE 0; END;/'
+check "REPLACE may overwrite cells" store.rs store update_and_delete_refused 's/WHEN EXISTS \(SELECT 1 FROM cells WHERE id = NEW\.id\)\n\s*OR NEW\.version/WHEN 0 AND NEW.version/'
+check "REPLACE may overwrite items" store.rs store update_and_delete_refused 's/WHEN EXISTS \(SELECT 1 FROM items WHERE id = NEW\.id\)/WHEN 0/'
+check "REPLACE may take a writer"   store.rs store update_and_delete_refused 's/WHEN EXISTS \(SELECT 1 FROM writers WHERE id = NEW\.id\n\s*OR \(session_id = NEW\.session_id AND agent_id = NEW\.agent_id\)\)/WHEN 0/'
+check "agent folds into session"    store.rs store fork_and_parent_own_cells 's/find_writer\(tx, &who\.session_id, &who\.agent_id\)\?/find_writer(tx, &who.session_id, "")?/'
+check "deferred transactions"       store.rs store concurrent_writers_both_land 's/TransactionBehavior::Immediate/TransactionBehavior::Deferred/g'
+check "answer open to sessions"     store.rs store session_cannot_write_the_owners_column 's/Field::Answer if !is_owner =>/Field::Answer if false =>/'
+check "old timeline node filter"    store.rs store fork_in_tree_and_timeline_order 's/a\.id = \?4 OR a\.parent = \?4 OR w\.id/w.id/'
+
+# Identity and place.
+check "worktree is its own project" identity.rs store projects_and_worktrees_stay_apart 's/project: shown\(&project\)/project: shown(&top)/'
+check "home repo is a project"      identity.rs store projects_and_worktrees_stay_apart 's/Some\(top\) if Some\(&top\) != home\.as_ref\(\) =>/Some(top) =>/'
+check "shell session id counts"     identity.rs command unidentified_command_write_refused 's/let session_id = get\(SESSION_VAR\)\.unwrap_or_default\(\);/let session_id = get(SESSION_VAR).or_else(|| get("CLAUDE_CODE_SESSION_ID")).unwrap_or_default();/'
+
+# The command and the hook.
+check "answer accepted"             main.rs command cli_refuses_answer 's/Cmd::Answer \{ \.\. \} => Err\(format!\(/Cmd::Answer { .. } if true => Ok(()),\n        Cmd::Answer { .. } => Err(format!(/'
+check "list ignores the project"    main.rs command command_round_trip 's/if !everywhere \{/if false && !everywhere {/'
+check "hook rewrites everything"    hook.rs command hook_rewrites_only_board_calls 's/if !runs_board\(command\) \{/if false && !runs_board(command) {/'
+check "hook drops the agent id"     hook.rs command hook_rewrites_only_board_calls 's/\{AGENT_VAR\}=\x27\{agent\}\x27/{AGENT_VAR}=\x27\x27/'
+
+# The server's guards and feed.
+check "any Host"                    server.rs server server_guards 's/if !hosts\.iter\(\)\.any\(\|h\| h == host\) \{/if false && !hosts.iter().any(|h| h == host) {/'
+check "Host checked on writes only" server.rs server server_guards 's/if !hosts\.iter\(\)\.any\(\|h\| h == host\) \{/if method != Method::GET && !hosts.iter().any(|h| h == host) {/'
+check "any Origin"                  server.rs server server_guards 's#if origin != format!\("http://\{host\}"\) \{#if false && origin != format!("http://{host}") {#'
+check "no custom header needed"     server.rs server server_guards 's/if text\(header::HeaderName::from_static\(WRITE_HEADER\)\) != Some\("1"\) \{/if false {/'
+check "change feed never moves"     server.rs server page_sees_writes_made_past_it 's/"changed": last > after/"changed": (false && last > after)/'
+check "stale answer accepted"       server.rs server page_answers_and_reads 's/WriteError::Stale \{ \.\. \} => StatusCode::CONFLICT,/WriteError::Stale { .. } => StatusCode::OK,/'
+
+
+# Added after review 02 (R1, R2, R6, R8, R10, R11, G8 and its notes).
+check "hand-set identity allowed"    hook.rs command hook_denies_a_hand_set_identity 's/if sets_identity\(command\) \{/if false && sets_identity(command) {/'
+check "refusal invites hand-setting" identity.rs command unidentified_command_write_refused 's/Never set FOCUS_BOARD_\* yourself/Set FOCUS_BOARD_SESSION yourself/'
+check "hook takes any id"            hook.rs command hook_rewrites_only_board_calls 's/!\[session, agent, agent_type\]/false && ![session, agent, agent_type]/'
+check "board may be framed"          server.rs server page_cannot_be_framed 's/\.layer\(middleware::map_response\(never_framed\)\)//'
+check "shared folder name mixes"     main.rs command a_shared_folder_name_does_not_mix_projects 's/\[one\] => Ok\(one\.to_string\(\)\),/[one, ..] => Ok(one.to_string()),/'
+check "repeated letter kept"         store.rs store a_repeated_option_letter_is_refused 's/\.find\(\|\(k, _\)\| !letters\.insert\(k\.as_str\(\)\)\)/.find(|(k, _)| false && !letters.insert(k.as_str()))/'
+check "newer layout opened"          store.rs store a_newer_layout_is_refused 's/if layout > LAYOUT \{/if false && layout > LAYOUT {/'
+check "anyone writes the question"   store.rs store only_the_author_writes_the_question 's/Field::Question \| Field::Options \| Field::Recommended if writer != author =>/Field::Question | Field::Options | Field::Recommended if false =>/'
+check "timeline never cut"           server.rs server timeline_is_cut_and_says_so 's/\.timeline\(&filter, after, Some\(limit\)\)\?/.timeline(&filter, after, None)?/'
+check "closed counts as active"      store.rs store timeline_cut_and_active_filter 's/"active" => i\.status != "closed",/"active" => true,/'
+check "cells may be deleted"         store.rs store update_and_delete_refused 's/cells are never deleted\x27\); END;/cells are never deleted\x27) WHERE 0; END;/'
+check "status set by a non-author"   store.rs command command_round_trip 's/Field::Status if !is_owner && writer != author =>/Field::Status if false =>/'
+
+cp -r .pristine/src/. src/
+exit $status
