@@ -173,6 +173,9 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
 - `focus-board search WORDS [--json]` covers all projects and statuses; `/api/items?q=` and the
   page's search box narrow the table. Old versions count: a word since edited away still finds its
   item.
+- On the page, search stays within the status filter (default "not closed") and the tree node, so
+  a closed item needs the filter set to "all". The owner kept it so (2026-11-22, B18 "b"), rather
+  than have typing switch the filter.
 
 ## The command
 
