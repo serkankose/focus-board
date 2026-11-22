@@ -771,3 +771,38 @@ fn search_finds_an_item_by_its_reference_from_the_command() {
     assert_eq!(ids("#77"), ["B1"]);
     assert_eq!(ids("B2"), ["B2"]);
 }
+
+/// A wait prints the answer through the board it opened, so an upgrade of the board's layout
+/// while it waits does not kill it (2026-11-22: the B22 wait saw the owner's answer, then died on
+/// "the board's layout is version 3, and this focus-board knows only up to version 2").
+#[test]
+fn a_wait_survives_a_layout_upgrade_while_it_waits() {
+    let board = Board::new();
+    board.ok(S, &["add", "q?", "-o", "a=yes", "-o", "b=no"]);
+    let db = board.dir.path().join("board.sqlite");
+    let mut owner = focus_board::store::Store::open(&db).unwrap();
+    let mut child = board
+        .command(None, "work")
+        .args(["wait", "B1", "--timeout", "20"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "wait ended before any answer"
+    );
+    // A newer focus-board upgrades the board while the wait runs.
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.pragma_update(None, "user_version", focus_board::store::LAYOUT + 1)
+        .unwrap();
+    drop(raw);
+    owner
+        .owner_answer(1, &serde_json::json!({ "pick": "a", "text": "go" }), None)
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("answer     a: go"), "{text}");
+}

@@ -488,7 +488,13 @@ fn cell_json(c: &Cell, writers: &[Writer]) -> Value {
 }
 
 fn show(item: &str, as_json: bool) -> Result<(), String> {
-    let store = open()?;
+    show_from(&open()?, item, as_json)
+}
+
+/// Prints an item from a board already open. A wait prints through the store it opened at its
+/// start: opening the board again would refuse a layout upgraded while it waited (2026-11-22, the
+/// B22 wait: it saw the owner's answer, then died on "update focus-board").
+fn show_from(store: &Store, item: &str, as_json: bool) -> Result<(), String> {
     let id = parse_item(item)?;
     let summary = store
         .items(&Filter::default())
@@ -600,7 +606,7 @@ fn wait(item: &str, after: Option<i64>, timeout: Option<u64>) -> Result<(), Stri
         let answered = owner("answer").map_or(0, |c| c.version);
         let closed = owner("status").is_some_and(|c| c.value == json!("closed"));
         if answered > after.unwrap_or(0) || closed {
-            return show(item, false);
+            return show_from(&store, item, false);
         }
         if timeout.is_some_and(|t| started.elapsed() >= Duration::from_secs(t)) {
             return Err(format!(
