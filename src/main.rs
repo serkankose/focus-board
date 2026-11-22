@@ -154,7 +154,15 @@ enum Cmd {
 enum HookCmd {
     /// Reads a PreToolUse input on stdin. For a Bash command that runs focus-board, prints the
     /// command with the session's ids in front. Never fails.
-    PreToolUse,
+    PreToolUse {
+        /// Leave the owner's review note to `hook post-tool-use`. For Copilot, which does not
+        /// show a note given before a command (2026-11-22, B34).
+        #[arg(long)]
+        note_after: bool,
+    },
+    /// Reads a PostToolUse input on stdin and adds the owner's review note after a Bash
+    /// command's output, in Copilot's format. Never fails.
+    PostToolUse,
 }
 
 fn main() -> ExitCode {
@@ -169,13 +177,27 @@ fn main() -> ExitCode {
 
 fn run(cmd: Cmd) -> Result<(), String> {
     match cmd {
-        Cmd::Hook(HookCmd::PreToolUse) => {
+        Cmd::Hook(HookCmd::PostToolUse) => {
+            let mut input = String::new();
+            if std::io::stdin().read_to_string(&mut input).is_ok()
+                && let Some((session, agent)) = hook::session_of(&input)
+                && let Some(db) = db_path()
+                && let Some(note) = review_note_for(&db, &session, &agent)
+            {
+                println!("{}", hook::post_tool_note(&note));
+            }
+            Ok(())
+        }
+        Cmd::Hook(HookCmd::PreToolUse { note_after }) => {
             let mut input = String::new();
             if std::io::stdin().read_to_string(&mut input).is_err() {
                 return Ok(());
             }
             // The owner's review request reaches a session at its next Bash call (B22 "b").
             let note = || {
+                if note_after {
+                    return None;
+                }
                 let (session, agent) = hook::session_of(&input)?;
                 review_note_for(&db_path()?, &session, &agent)
             };

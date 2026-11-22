@@ -205,6 +205,11 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   seen, at once when no item is open, when the session's Claude Code process (`CLAUDE_PID`,
   checked by `kill -0` every 30 s) is gone, and after a time limit, 24 hours by default. So an idle
   session wakes about once a day.
+- **Copilot gets the note after the command** (owner, 2026-11-22, B34 "a"). Copilot runs the same
+  hook from its own hook file, and its rewrite works, but it never shows a note given before a
+  command; the press was marked seen all the same. Its hook file passes `--note-after`, so the
+  before-command hook leaves the note alone, and a `PostToolUse` entry runs `focus-board hook
+  post-tool-use`, which gives it as Copilot's `additionalContext`, appended to the output, once.
 - **A wait prints through the board it opened** (2026-11-22): opening it again refused a layout
   upgraded meanwhile, and the B22 wait died on "update focus-board" instead of printing the answer.
 
@@ -293,7 +298,8 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* One port per platform | `each_platform_has_its_own_port`, `where_page_prints_the_address` |
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 94 checks |
+| *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 96 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

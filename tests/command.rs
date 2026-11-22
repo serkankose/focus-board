@@ -962,3 +962,62 @@ fn wait_mine_ends_on_each_of_its_reasons() {
     let said = text(board.run(S, &["wait", "--mine", "--timeout", "20"]));
     assert!(said.contains("nothing to wait for"), "{said}");
 }
+
+/// For Copilot (2026-11-22, B34): Copilot shows no note given before a command, so with
+/// `--note-after` the pre-tool hook leaves the note alone, and the post-tool hook gives it once,
+/// in Copilot's format.
+#[test]
+fn copilot_gets_the_review_note_after_the_command() {
+    let board = Board::new();
+    board.ok(S, &["add", "First?"]);
+    let db = board.dir.path().join("board.sqlite");
+    let run = |args: &[&str], command: &str| -> String {
+        let input = serde_json::json!({ "tool_name": "Bash", "session_id": "sess-1",
+            "tool_input": { "command": command } })
+        .to_string();
+        let mut child = Command::new(BIN)
+            .args(args)
+            .env("FOCUS_BOARD_DB", &db)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    focus_board::store::Store::open(&db)
+        .unwrap()
+        .ask_for_review()
+        .unwrap();
+    let before: Value = serde_json::from_str(&run(
+        &["hook", "pre-tool-use", "--note-after"],
+        "focus-board list",
+    ))
+    .unwrap();
+    let specific = &before["hookSpecificOutput"];
+    assert!(
+        specific["updatedInput"].is_object(),
+        "the rewrite stays: {before}"
+    );
+    assert!(
+        specific.get("additionalContext").is_none(),
+        "no note before: {before}"
+    );
+    let after: Value = serde_json::from_str(&run(&["hook", "post-tool-use"], "ls")).unwrap();
+    assert!(
+        after["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("B1 (open)"),
+        "{after}"
+    );
+    assert_eq!(run(&["hook", "post-tool-use"], "ls"), "", "once per press");
+}

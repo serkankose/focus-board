@@ -216,6 +216,13 @@ pub fn with_note(out: Option<String>, note: impl FnOnce() -> Option<String>) -> 
     }
 }
 
+/// The owner's review note after a Bash command's output, in Copilot's `postToolUse` format,
+/// which appends it to the command's result. Copilot shows no note given before a command
+/// (2026-11-22, B34).
+pub fn post_tool_note(note: &str) -> String {
+    json!({ "additionalContext": note }).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

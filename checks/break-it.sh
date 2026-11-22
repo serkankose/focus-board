@@ -148,6 +148,8 @@ check "wait --mine ignores news"     main.rs command wait_mine_ends_on_each_of_i
 check "wait --mine waits, none open" main.rs command wait_mine_ends_on_each_of_its_reasons 's/if open_items\.is_empty\(\) \{/if false {/'
 check "wait --mine has no limit"     main.rs command wait_mine_ends_on_each_of_its_reasons 's/if started\.elapsed\(\) >= limit \{/if false {/'
 check "wait --mine outlives its session" main.rs command wait_mine_ends_on_each_of_its_reasons 's/if !alive\(pid\) \{/if false {/'
+check "--note-after still notes"    main.rs command copilot_gets_the_review_note_after_the_command 's/if note_after \{/if false {/'
+check "post-tool-use gives no note" main.rs command copilot_gets_the_review_note_after_the_command 's/println!\("\{\}", hook::post_tool_note\(&note\)\);/let _ = note;/'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 

@@ -103,6 +103,18 @@ which starts when you log in. Two more pieces live in your own Claude Code setti
 - **The skill** `focus-board`, in `~/.claude/skills/focus-board/SKILL.md`, which tells sessions
   how to use the board.
 
+**GitHub Copilot CLI** reads its own hook files, never Claude Code's. Put this in
+`~/.copilot/hooks/focus-board.json`. Copilot shows no note given before a command, so the review
+note comes after the command's output instead:
+
+```json
+{ "version": 1, "hooks": {
+  "PreToolUse": [{ "type": "command", "matcher": "Bash", "timeoutSec": 5,
+    "bash": "\"$HOME/.cargo/bin/focus-board\" hook pre-tool-use --note-after 2>/dev/null || true" }],
+  "PostToolUse": [{ "type": "command", "matcher": "Bash", "timeoutSec": 5,
+    "bash": "\"$HOME/.cargo/bin/focus-board\" hook post-tool-use 2>/dev/null || true" }] } }
+```
+
 The code also builds for Windows and macOS, but there is no installer for them yet.
 
 ## Where things are
