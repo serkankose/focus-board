@@ -42,7 +42,8 @@ Sessions show a name, never an id: the first of these that exists.
 3. Claude Code's or Copilot's own label for it.
 4. A stable made-up name, such as `plain-crane`.
 
-A rename shows on the page within a few seconds.
+A rename shows on the page within a few seconds. A mark before the name tells the tool: ✻ Claude
+Code, ◈ GitHub Copilot.
 
 ## For Claude Code sessions
 

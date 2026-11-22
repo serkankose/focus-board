@@ -630,3 +630,25 @@ fn the_review_button_asks_and_shows_who_has_seen_it() {
     let (_, feed) = board.get("/api/changes?after=0");
     assert_eq!(feed["reviews"], 2, "one press, one seen mark");
 }
+
+/// The tree tells each session's tool (owner, 2026-11-22, #361): Claude Code here, from its
+/// transcript in the watched folder; the owner has none.
+#[test]
+fn the_tree_tells_each_sessions_tool() {
+    let projects = tempfile::tempdir().unwrap();
+    let dir = projects.path().join("-p");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("s1.jsonl"), "{}\n").unwrap();
+    let board = Board::start_watching(Some(projects.path().to_path_buf()));
+    let (_, tree) = board.get("/api/tree");
+    let tool = |sid: &str| {
+        tree["writers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["session_id"] == sid && w["agent_id"] == "")
+            .map(|w| w["tool"].clone())
+    };
+    assert_eq!(tool("s1"), Some(json!("claude")), "{tree}");
+    assert_eq!(tool(""), Some(Value::Null), "the owner has none");
+}

@@ -163,7 +163,10 @@ function shown(v) {
   return JSON.stringify(v);
 }
 const writer = (id) => state.writers.get(id);
-const label = (id) => (writer(id) ? writer(id).label : "writer " + id);
+// Which tool a session runs in (owner, 2026-11-22, #361): a mark of our own, not the products' logos.
+const TOOLS = { claude: ["✻", "Claude Code"], copilot: ["◈", "GitHub Copilot"] };
+const marked = (w) => (TOOLS[w.tool] ? TOOLS[w.tool][0] + " " : "") + w.label;
+const label = (id) => (writer(id) ? marked(writer(id)) : "writer " + id);
 const place = (w) => (w && w.kind === "session" ? folder(w.project) + (w.workspace !== w.project ? " / " + folder(w.workspace) : "") : "");
 const cell = (item, writerId, field) => item.cells.find((c) => c.writer === writerId && c.field === field);
 
@@ -279,8 +282,8 @@ function renderTree() {
   };
   // Under each writer: its agents, and the sessions copied from it (/branch, /fork), at any depth.
   const childrenOf = (w) => sessions.filter((c) => c.parent === w.id);
-  const sessionNode = (w) => node("writer", w.id, w.agent_id ? (w.agent_type || "agent") + " " + w.agent_id.slice(0, 8) : w.label,
-    w.agent_id || w.session_id, clock(w.last_at), childrenOf(w).map(sessionNode));
+  const sessionNode = (w) => node("writer", w.id, w.agent_id ? (w.agent_type || "agent") + " " + w.agent_id.slice(0, 8) : marked(w),
+    (TOOLS[w.tool] ? TOOLS[w.tool][1] + " · " : "") + (w.agent_id || w.session_id), clock(w.last_at), childrenOf(w).map(sessionNode));
   const tops = sessions.filter((s) => !s.agent_id && !sessions.some((p) => p.id === s.parent));
   const projects = group(tops, (s) => s.project).map(([project, list]) => {
     const workspaces = group(list, (s) => s.workspace);

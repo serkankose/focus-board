@@ -151,6 +151,10 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
     and `user_named: true` when the owner gave it with `/rename` (read as `user`, else `auto`).
     Only that one file is read, and only for a plain session id, so an id never leads out of the
     folder. The command and the watcher both read it.
+  - **Which tool** (owner, 2026-11-22, #361): the tree's writers carry `tool`, `copilot` when
+    Copilot's session state has a folder for the session, `claude` when its transcript is there,
+    else none. The page marks names with ✻ (Claude Code) or ◈ (Copilot), symbols of our own,
+    not the products' logos, with the tool's name on hover in the tree.
   - The command reads it on every write. The server also watches each session's transcript
     (`src/names.rs`; `~/.claude/projects/*/<session id>.jsonl`, or `FOCUS_BOARD_PROJECTS`):
     it reads the file in full once, then only the bytes added. So a `/rename` reaches the page
@@ -298,6 +302,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* `wait` ends when the owner answers | `wait_ends_when_the_owner_answers`, `wait_returns_at_once_or_times_out` |
 | *(owner's ask)* A rename reaches the board without a write | `the_watch_follows_a_rename`, `a_rewritten_transcript_is_read_again`, `a_rename_reaches_the_board_without_a_write` |
 | *(owner's ask)* The registry's names, in order | `the_registry_names_running_sessions`, `a_write_takes_the_registry_name` |
+| *(owner's ask, #361)* Each session's tool | `a_sessions_tool_comes_from_its_files`, `the_tree_tells_each_sessions_tool` |
 | *(owner's ask, #353)* Copilot sessions' names | `copilot_sessions_have_their_names`, `a_copilot_session_writes_under_its_copilot_name` |
 | *(owner's ask)* Full text search | `full_text_search_finds_any_cell_text`, `an_older_board_is_brought_to_layout_2`, `search_finds_items_by_their_text`, `the_page_can_search`, and the page check "searching narrows the table" |
 | *(owner's ask)* Search by reference, every word anywhere in the item | `search_finds_an_item_by_its_reference`, `every_word_may_sit_in_a_different_cell`, `a_layout_2_board_gains_the_item_column`, `search_finds_an_item_by_its_reference_from_the_command`, `the_page_can_search_by_reference` |
@@ -305,7 +310,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 99 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 102 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

@@ -190,3 +190,29 @@ fn copilot_sessions_have_their_names() {
         ]
     );
 }
+
+/// Which tool a session runs in (owner, 2026-11-22, #361): Copilot when Copilot keeps a folder for
+/// it, Claude Code when its transcript is there, none when neither is or the id is not plain.
+#[test]
+fn a_sessions_tool_comes_from_its_files() {
+    let projects = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("session-state");
+    std::fs::create_dir_all(state.join("copilot-1")).unwrap();
+    std::fs::create_dir_all(root.path().join("decoy")).unwrap();
+    append(&transcript(projects.path(), "claude-1"), &title("x"));
+    let tool = |id: &str| focus_board::names::tool_of(projects.path(), Some(&state), id);
+    assert_eq!(tool("claude-1"), Some("claude"));
+    assert_eq!(tool("copilot-1"), Some("copilot"));
+    assert_eq!(tool("gone"), None);
+    assert_eq!(
+        tool("../decoy"),
+        None,
+        "an id never leads out of the folder"
+    );
+    assert_eq!(
+        focus_board::names::tool_of(projects.path(), None, "copilot-1"),
+        None,
+        "no Copilot folder known"
+    );
+}

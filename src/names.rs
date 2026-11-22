@@ -67,6 +67,19 @@ pub fn copilot_name(dir: &Path, session_id: &str) -> Option<Registered> {
     })
 }
 
+/// Which tool a session belongs to (owner, 2026-11-22, #361), from the files that know it: a
+/// Copilot session has a folder in Copilot's session state, a Claude Code session a transcript.
+/// `None` when neither is there any more, or the id is not plain.
+pub fn tool_of(projects: &Path, copilot: Option<&Path>, session_id: &str) -> Option<&'static str> {
+    if session_id.is_empty() || !is_plain_id(session_id) {
+        return None;
+    }
+    if copilot.is_some_and(|dir| dir.join(session_id).is_dir()) {
+        return Some("copilot");
+    }
+    find_transcript(projects, session_id).map(|_| "claude")
+}
+
 /// A one-line YAML scalar as text: 'single' (with '' for '), "double" (JSON escapes), or plain.
 fn yaml_text(v: &str) -> String {
     if let Some(inner) = v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
@@ -168,6 +181,11 @@ impl NameWatcher {
             copilot: None,
             sessions: HashMap::new(),
         }
+    }
+
+    /// The folders it reads: Claude Code's transcripts, and Copilot's session state.
+    pub fn dirs(&self) -> (PathBuf, Option<PathBuf>) {
+        (self.projects.clone(), self.copilot.clone())
     }
 
     /// Also names Copilot sessions from Copilot's own folder (see [`copilot_name`]).

@@ -18,8 +18,9 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
-use crate::names::NameWatcher;
+use crate::names::{NameWatcher, tool_of};
 use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer, label_in};
+use std::path::PathBuf;
 
 /// The header every write must carry. A cross-site form cannot send a custom header.
 pub const WRITE_HEADER: &str = "x-focus-board";
@@ -38,6 +39,9 @@ struct App {
     hosts: Arc<[String; 2]>,
     /// Counts the renames the watch made, so the page knows to refresh (`/api/changes`).
     renames: Arc<AtomicU64>,
+    /// Where each session's tool is told from (#361): Claude Code's transcripts, Copilot's
+    /// session state. `None` without a name watcher.
+    tools: Arc<Option<(PathBuf, Option<PathBuf>)>>,
 }
 
 /// How often the server looks for renamed sessions.
@@ -56,6 +60,7 @@ pub async fn serve(
         store: Arc::new(Mutex::new(store)),
         hosts: Arc::new([format!("127.0.0.1:{port}"), format!("localhost:{port}")]),
         renames: Arc::new(AtomicU64::new(0)),
+        tools: Arc::new(watcher.as_ref().map(NameWatcher::dirs)),
     };
     if let Some(watcher) = watcher {
         tokio::spawn(watch_renames(app.clone(), watcher));
@@ -303,7 +308,8 @@ async fn items(State(app): State<App>, Query(q): Query<HashMap<String, String>>)
 
 /// Every writer, with its label, its parent and when it last wrote.
 async fn tree(State(app): State<App>) -> ApiResult {
-    on_store(&app, |store| {
+    let tools = app.tools.clone();
+    on_store(&app, move |store| {
         let last: HashMap<i64, (i64, String)> = store
             .last_writes()?
             .into_iter()
@@ -325,6 +331,9 @@ async fn tree(State(app): State<App>) -> ApiResult {
                     "project": w.project,
                     "workspace": w.workspace,
                     "name": w.name,
+                    "tool": tools.as_ref().as_ref().and_then(|(projects, copilot)| {
+                        tool_of(projects, copilot.as_deref(), &w.session_id)
+                    }),
                     "last_seq": last_seq,
                     "last_at": last_at,
                 })

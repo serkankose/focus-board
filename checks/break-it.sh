@@ -153,6 +153,9 @@ check "post-tool-use gives no note" main.rs command copilot_gets_the_review_note
 check "copilot names are ignored"   names.rs names copilot_sessions_have_their_names 's/if !is_plain_id\(session_id\) \|\| session_id\.is_empty\(\) \{/if true {/'
 check "a session id leaves the folder" names.rs names copilot_sessions_have_their_names 's/if !is_plain_id\(session_id\) \|\| session_id\.is_empty\(\) \{/if session_id.is_empty() {/'
 check "a copilot write ignores its name" main.rs command a_copilot_session_writes_under_its_copilot_name 's/let copilot = copilot_dir\(\)\.and_then\(\|dir\| copilot_name\(&dir, &who\.session_id\)\);/let copilot: Option<focus_board::names::Registered> = None;/'
+check "copilot sessions get no mark" names.rs names a_sessions_tool_comes_from_its_files 's/if copilot\.is_some_and\(\|dir\| dir\.join\(session_id\)\.is_dir\(\)\) \{/if false {/'
+check "a tool id leaves the folder" names.rs names a_sessions_tool_comes_from_its_files 's/if session_id\.is_empty\(\) \|\| !is_plain_id\(session_id\) \{/if session_id.is_empty() {/'
+check "the tree drops the tool"     server.rs server the_tree_tells_each_sessions_tool 's/"tool": tools/"tool_": tools/'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
