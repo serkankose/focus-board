@@ -3,6 +3,7 @@ name = "focus-board"
 version = "0.1.0"
 edition = "2024"
 description = "A shared board of open questions: the owner answers on a page, sessions write through a command."
+license = "MIT"
 publish = false
 
 [dependencies]

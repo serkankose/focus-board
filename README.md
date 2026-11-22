@@ -127,3 +127,7 @@ The code also builds for Windows and macOS, but there is no installer for them y
 runs the tests. `checks/` holds two more:
 - `break-it.sh` removes each rule in turn, and its test must then fail;
 - `page-check.sh` drives the page in a headless Firefox.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
