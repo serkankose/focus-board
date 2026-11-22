@@ -207,6 +207,12 @@ try:
     except RuntimeError as e:
         check("the review button asks the sessions", False, str(e))
 
+    # The tree counts each node's items not closed (owner, 2026-11-22): the whole board's count is
+    # the rows the table shows, with the status filter at "not closed" and no search.
+    badge = m.js("return document.querySelector('nav button.node').getAttribute('data-count') || ''")
+    rows = m.js(ROWS)
+    check("the tree counts the items not closed", badge == str(len(rows)), f"count {badge}, rows {len(rows)}")
+
     labels = m.js("return [...document.querySelectorAll('nav button.node')].map(b => b.innerText.split(' ·')[0])")
     check("a project with one workspace has no workspace level; one with two has it",
           labels.count("beta") == 1 and labels.count("alpha") == 2 and "alpha-feature" in labels,

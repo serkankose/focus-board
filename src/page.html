@@ -34,6 +34,10 @@ nav > ul { padding-left: 0; }
 nav button.node { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent;
   padding: 2px 6px; margin: 1px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 nav button.node.selected { background: var(--chip); border-color: var(--line); }
+nav button.node[data-count]::after { content: attr(data-count); float: right; min-width: 1.6em; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  background: var(--chip); color: var(--muted); font-size: 0.75em; line-height: 1.7; text-align: center;
+  font-variant-numeric: tabular-nums; }
+nav button.node.waiting[data-count]::after { background: var(--open); color: var(--card); font-weight: 600; }
 section { padding: 12px 16px; min-width: 0; }
 table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
 th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line); }
@@ -187,13 +191,15 @@ async function refresh() {
   state.busy = true;
   try {
     const q = query();
-    const [tree, items, timeline, review] = await Promise.all([
+    const [tree, items, timeline, review, active] = await Promise.all([
       getJSON("/api/tree"), getJSON("/api/items?" + q),
       getJSON("/api/timeline?" + q + "&limit=" + TIMELINE_MAX), getJSON("/api/review"),
+      getJSON("/api/items?status=active"),
     ]);
     state.writers = new Map(tree.writers.map((w) => [w.id, w]));
     state.owner = tree.writers.find((w) => w.kind === "owner")?.id ?? null;
     state.items = items.items;
+    state.active = active.items;
     // The smallest of the three: a write that landed between the fetches is fetched next poll.
     state.last = Math.min(tree.last, items.last, timeline.last);
     renderProjects();
@@ -271,10 +277,24 @@ function renderProjects() {
 function renderTree() {
   const sessions = [...state.writers.values()].filter((w) => w.kind === "session");
   const selected = (kind, value) => state.node && state.node.kind === kind && String(state.node.value) === String(value);
-  const node = (kind, value, text, title, extra, children) => el("li", {},
-    el("button", { class: "node" + (selected(kind, value) ? " selected" : ""), title, onclick: () => select(kind, value) },
-      text, extra ? el("span", { class: "muted" }, " · " + extra) : null),
-    children && children.length ? el("ul", {}, children) : null);
+  // Each node counts its items not closed (owner, 2026-11-22), the ones the table shows when it is
+  // picked; coloured when some still wait for the owner's answer. CSS draws the count from
+  // data-count, so it stays out of the node's text.
+  const active = state.active || [];
+  const counted = (list, title) => {
+    const open = list.filter((i) => i.status === "open").length;
+    const tally = list.length
+      ? list.length + " not closed" + (open ? ", " + open + " waiting for your answer" : ", all answered") : null;
+    return { waiting: open > 0, title: [title, tally].filter(Boolean).join(" · ") || null, count: list.length || null };
+  };
+  const node = (kind, value, text, title, extra, children, items) => {
+    const c = counted(items || [], title);
+    return el("li", {},
+      el("button", { class: "node" + (selected(kind, value) ? " selected" : "") + (c.waiting ? " waiting" : ""),
+        title: c.title, "data-count": c.count, onclick: () => select(kind, value) },
+        text, extra ? el("span", { class: "muted" }, " · " + extra) : null),
+      children && children.length ? el("ul", {}, children) : null);
+  };
   const group = (list, key) => {
     const m = new Map();
     for (const x of list) m.set(key(x), [...(m.get(key(x)) || []), x]);
@@ -282,19 +302,26 @@ function renderTree() {
   };
   // Under each writer: its agents, and the sessions copied from it (/branch, /fork), at any depth.
   const childrenOf = (w) => sessions.filter((c) => c.parent === w.id);
+  const branch = (w) => [w.id, ...childrenOf(w).flatMap(branch)];
   const sessionNode = (w) => node("writer", w.id, w.agent_id ? (w.agent_type || "agent") + " " + w.agent_id.slice(0, 8) : marked(w),
-    (TOOLS[w.tool] ? TOOLS[w.tool][1] + " · " : "") + (w.agent_id || w.session_id), clock(w.last_at), childrenOf(w).map(sessionNode));
+    (TOOLS[w.tool] ? TOOLS[w.tool][1] + " · " : "") + (w.agent_id || w.session_id), clock(w.last_at), childrenOf(w).map(sessionNode),
+    active.filter((i) => branch(w).includes(i.author)));
   const tops = sessions.filter((s) => !s.agent_id && !sessions.some((p) => p.id === s.parent));
   const projects = group(tops, (s) => s.project).map(([project, list]) => {
     const workspaces = group(list, (s) => s.workspace);
     // A project whose only workspace is the project folder itself needs no workspace level.
     const children = workspaces.length === 1 && workspaces[0][0] === project
       ? workspaces[0][1].map(sessionNode)
-      : workspaces.map(([ws, ss]) => node("workspace", ws, folder(ws), ws, null, ss.map(sessionNode)));
-    return node("project", project, folder(project), project, null, children);
+      : workspaces.map(([ws, ss]) => node("workspace", ws, folder(ws), ws, null, ss.map(sessionNode),
+        active.filter((i) => i.workspace === ws)));
+    return node("project", project, folder(project), project, null, children, active.filter((i) => i.project === project));
   });
   $("tree").replaceChildren(
-    el("li", {}, el("button", { class: "node" + (state.node ? "" : " selected"), onclick: () => select(null) }, "whole board")),
+    (() => {
+      const c = counted(active, null);
+      return el("li", {}, el("button", { class: "node" + (state.node ? "" : " selected") + (c.waiting ? " waiting" : ""),
+        title: c.title, "data-count": c.count, onclick: () => select(null) }, "whole board"));
+    })(),
     ...projects);
 }
 
