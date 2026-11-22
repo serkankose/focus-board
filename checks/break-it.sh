@@ -125,9 +125,13 @@ check "the older registry name wins" names.rs names the_registry_names_running_s
 check "a write ignores the registry" main.rs command a_write_takes_the_registry_name 's/best_name\(registered\.get\(&who\.session_id\), &names\)/best_name(None, \&names)/'
 check "new cells are not indexed"    store.rs store full_text_search_finds_any_cell_text 's/cells_indexed AFTER INSERT ON cells BEGIN/cells_indexed AFTER DELETE ON cells BEGIN/'
 check "old cells are not indexed"    store.rs store an_older_board_is_brought_to_layout_2 's/FROM cells c;/FROM cells c WHERE 0;/'
-check "odd characters reach the index" store.rs store full_text_search_finds_any_cell_text 's/format!\("\\"\{\}\\"\*", w\.replace\(\x27"\x27, "\\"\\""\)\)/format!("{}*", w)/'
-check "a word's start does not match" store.rs store full_text_search_finds_any_cell_text 's/format!\("\\"\{\}\\"\*", w\.replace/format!("\\"{}\\"", w.replace/'
-check "any one word is enough"       store.rs store full_text_search_finds_any_cell_text 's/\.join\(" "\)/.join(" OR ")/'
+check "odd characters reach the index" store.rs store full_text_search_finds_any_cell_text 's/format!\("\\"\{\}\\"", word/format!("{}", word/'
+check "a word's start does not match" store.rs store full_text_search_finds_any_cell_text 's/quoted\(w\) \+ "\*"/quoted(w)/'
+check "any one word is enough"       store.rs store full_text_search_finds_any_cell_text 's/so_far\.intersection\(&items\)/so_far.union(\&items)/'
+check "words must share one cell"    store.rs store every_word_may_sit_in_a_different_cell 's/(if terms\.is_empty\(\) \{\s*return Ok\(Vec::new\(\)\);\s*\})/$1\n        return self.conn.prepare("SELECT DISTINCT item FROM cell_text WHERE cell_text MATCH ?1")?.query_map(params![terms.join(" ")], |r| r.get(0))?.collect();/'
+check "a reference matches as a start" store.rs store search_finds_an_item_by_its_reference 's/if is_ref\(w\) \{/if false \&\& is_ref(w) {/'
+check "new items are not indexed"    store.rs store search_finds_an_item_by_its_reference 's/items_indexed AFTER INSERT ON items BEGIN/items_indexed AFTER DELETE ON items BEGIN/'
+check "old items are not indexed"    store.rs store a_layout_2_board_gains_the_item_column 's/FROM items i;/FROM items i WHERE 0;/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
 cp -r .pristine/src/. src/

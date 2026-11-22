@@ -1414,3 +1414,132 @@ fn an_older_board_is_brought_to_layout_2() {
         "new cells are indexed too"
     );
 }
+
+/// The owner (2026-11-22): "full text search should also contain ITEM column, we can search by
+/// ref number etc". The Item column's text is indexed too: the item's id, its label and the item it
+/// follows. A whole reference matches exactly, so "B1" is not B10 and "#24" is not "#243".
+#[test]
+fn search_finds_an_item_by_its_reference() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let (me, here) = (session("s"), place("p", "p"));
+    let labelled = |label: &str| NewItem {
+        label: label.into(),
+        ..question("Which way?")
+    };
+    let first = store.add_item(&me, &here, &labelled("#24")).unwrap();
+    let second = store.add_item(&me, &here, &labelled("#243")).unwrap();
+    for _ in 3..=11 {
+        store
+            .add_item(&me, &here, &question("Another one?"))
+            .unwrap();
+    }
+    let follow_up = NewItem {
+        parent: Some(second),
+        ..question("And then?")
+    };
+    let follow_up = store.add_item(&me, &here, &follow_up).unwrap();
+
+    let found = |typed: &str| store.search(typed).unwrap();
+    assert_eq!(found("B1"), vec![first], "B1 is not B10 or B11");
+    assert_eq!(
+        found("b2"),
+        vec![second, follow_up],
+        "its id, and the item that follows it"
+    );
+    assert_eq!(
+        found("#24"),
+        vec![first],
+        "a label exactly: #24 is not #243"
+    );
+    assert_eq!(found("#243"), vec![second]);
+    assert_eq!(
+        found("243"),
+        vec![second],
+        "a plain number is the start of a word"
+    );
+    assert_eq!(
+        found("B11 another").len(),
+        1,
+        "a reference and a word together"
+    );
+}
+
+/// A layout 2 board gains the Item column in its index on open: the items already there are
+/// indexed, and new ones as they come.
+#[test]
+fn a_layout_2_board_gains_the_item_column() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let (me, here) = (session("s"), place("p", "p"));
+    let item = store
+        .add_item(&me, &here, &question("Rename the branch?"))
+        .unwrap();
+    drop(store);
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.execute_batch(
+        "DROP TRIGGER items_indexed; DELETE FROM cell_text WHERE cell IS NULL; PRAGMA user_version = 2;",
+    )
+    .unwrap();
+    drop(raw);
+
+    let mut store = Store::open(&db).unwrap();
+    assert_eq!(
+        store.search(&format!("B{item}")).unwrap(),
+        vec![item],
+        "old items were indexed"
+    );
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    let version: i64 = raw
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, LAYOUT);
+    let later = store
+        .add_item(&me, &here, &question("Merge the docs?"))
+        .unwrap();
+    assert_eq!(
+        store.search(&format!("B{later}")).unwrap(),
+        vec![later],
+        "new items are indexed too"
+    );
+}
+
+/// Every word must be in the item, but each may sit in a different cell, or in its Item column.
+/// Found while adding the Item column (2026-11-22): the index matches one query's words within one
+/// row, one cell, so "B11 another" found nothing.
+#[test]
+fn every_word_may_sit_in_a_different_cell() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let (me, here) = (session("s"), place("p", "p"));
+    let item = store
+        .add_item(&me, &here, &question("Keep SQLite?"))
+        .unwrap();
+    let other = store
+        .add_item(&me, &here, &question("Keep the port?"))
+        .unwrap();
+    store
+        .write_as_session(
+            &me,
+            &here,
+            item,
+            Field::Feedback,
+            &feedback("the indexer is slow"),
+            None,
+        )
+        .unwrap();
+    store
+        .owner_answer(other, &json!({ "text": "slow is fine" }), None)
+        .unwrap();
+    let found = |typed: &str| store.search(typed).unwrap();
+    assert_eq!(
+        found("sqlite slow"),
+        vec![item],
+        "the question and the feedback"
+    );
+    assert_eq!(found("keep slow"), vec![item, other]);
+    assert!(
+        found("sqlite fine").is_empty(),
+        "words in two different items"
+    );
+}

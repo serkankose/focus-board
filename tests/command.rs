@@ -752,3 +752,22 @@ fn where_page_prints_the_address() {
     let help = String::from_utf8(board.run(None, &["serve", "--help"]).stdout).unwrap();
     assert!(help.contains(&format!("[default: {port}]")), "{help}");
 }
+
+/// The owner (2026-11-22): the command's search also finds an item by its reference.
+#[test]
+fn search_finds_an_item_by_its_reference_from_the_command() {
+    let board = Board::new();
+    board.ok(S, &["add", "First?", "--label", "#77"]);
+    board.ok(S, &["add", "Second?"]);
+    let ids = |typed: &str| -> Vec<String> {
+        let out: Value =
+            serde_json::from_str(&board.ok(None, &["search", typed, "--json"])).unwrap();
+        out.as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(ids("#77"), ["B1"]);
+    assert_eq!(ids("B2"), ["B2"]);
+}

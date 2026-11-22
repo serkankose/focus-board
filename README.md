@@ -21,8 +21,9 @@ boards on one machine never clash: 8810 on Linux, 8811 inside WSL, 8812 on Windo
 - **The tree** on the left shows projects, worktrees and sessions, with each session's subagents
   and copies (`/branch`, `/fork`) under it. Click a node to show only its items.
 - **Search** narrows the table to the items that hold every word you type, each as the start of a
-  word ("sqli" finds "SQLite"), old versions included. It works within the status filter and the
-  tree node you picked, so set the filter to "all" to search closed items too.
+  word ("sqli" finds "SQLite"), old versions included. It also finds an item by its reference, as
+  the Item column shows it: `B12`, or a label such as `#243`. It works within the status filter
+  and the tree node you picked, so set the filter to "all" to search closed items too.
 - **The status filter** shows open, answered or closed items, or everything.
 - **The timeline**, below the table, lists every write, newest first.
 

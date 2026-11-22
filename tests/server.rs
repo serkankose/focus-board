@@ -586,3 +586,13 @@ fn the_page_can_search() {
     let (_, miss) = board.get("/api/items?q=nothing%20here");
     assert_eq!(miss["items"], json!([]));
 }
+
+/// The page's search finds an item by its reference too (owner, 2026-11-22).
+#[test]
+fn the_page_can_search_by_reference() {
+    let board = Board::start();
+    let (_, hit) = board.get("/api/items?q=B1");
+    assert_eq!(hit["items"].as_array().unwrap().len(), 1, "{hit}");
+    let (_, miss) = board.get("/api/items?q=B2");
+    assert_eq!(miss["items"], json!([]));
+}

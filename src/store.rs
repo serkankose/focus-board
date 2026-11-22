@@ -94,7 +94,7 @@ COMMIT;
 /// The board's layout version, kept in SQLite's `user_version` and set by [`SCHEMA`]. A board
 /// written by a newer focus-board is refused rather than read with the wrong layout. Since the
 /// triggers forbid changing rows in place, a layout change is a new version (review R11).
-pub const LAYOUT: i64 = 2;
+pub const LAYOUT: i64 = 3;
 
 /// The rows a timeline draws from: `?1` after this row, `?2` project, `?3` workspace, `?4` node.
 /// A node's timeline holds the writes on the items raised in that branch, whoever made them (the
@@ -644,18 +644,30 @@ impl Store {
         )
     }
 
-    /// The items whose text matches every word typed, in any version of any cell: question,
-    /// options, answers, feedback. Oldest first; nothing for an empty query.
+    /// The items that hold every word typed, each word anywhere in the item: any version of any
+    /// cell (question, options, answers, feedback) or its Item column (id, label, the item it
+    /// follows). Oldest first; nothing for an empty query. Each word is looked up on its own and
+    /// the items intersected, because the index matches all of one query's words within one row,
+    /// that is one cell.
     pub fn search(&self, typed: &str) -> Result<Vec<ItemId>, rusqlite::Error> {
-        let query = text_query(typed);
-        if query.is_empty() {
+        let terms = text_terms(typed);
+        if terms.is_empty() {
             return Ok(Vec::new());
         }
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT item FROM cell_text WHERE cell_text MATCH ?1 ORDER BY item",
-        )?;
-        let rows = stmt.query_map(params![query], |r| r.get(0))?;
-        rows.collect()
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT item FROM cell_text WHERE cell_text MATCH ?1")?;
+        let mut found: Option<std::collections::BTreeSet<ItemId>> = None;
+        for term in &terms {
+            let items = stmt
+                .query_map(params![term], |r| r.get(0))?
+                .collect::<Result<std::collections::BTreeSet<ItemId>, _>>()?;
+            found = Some(match found {
+                None => items,
+                Some(so_far) => so_far.intersection(&items).copied().collect(),
+            });
+        }
+        Ok(found.unwrap_or_default().into_iter().collect())
     }
 
     /// When each writer last wrote: `(writer, row, time)` of its newest cell.
@@ -829,6 +841,10 @@ fn resolve_writer(tx: &Transaction, who: &Identity, place: &Place) -> Result<Wri
 ///   index (FTS5) over every version of every cell, kept by a trigger on `cells`, and filled from
 ///   the cells already there. A cell's text is all its JSON values: a question, the options' texts,
 ///   a pick and a text.
+/// - Layout 3 (2026-11-22, the owner's "full text search should also contain ITEM column, we can
+///   search by ref number etc"): the Item column's text, the item's id, its label and the item it
+///   follows (`B12 #243 follows B11`), as one more row per item in `cell_text`, with no cell. A
+///   trigger on `items` keeps it (items never change), filled from the items already there.
 fn upgrade(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let result = (|| {
@@ -849,6 +865,22 @@ fn upgrade(conn: &Connection) -> Result<(), rusqlite::Error> {
                  PRAGMA user_version = 2;",
             )?;
         }
+        if layout < 3 {
+            conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS items_indexed AFTER INSERT ON items BEGIN
+                     INSERT INTO cell_text (text, item, cell) VALUES
+                         ('B' || NEW.id || ' ' || NEW.label
+                              || COALESCE(' follows B' || NEW.parent, ''),
+                          NEW.id, NULL);
+                 END;
+                 DELETE FROM cell_text WHERE cell IS NULL;
+                 INSERT INTO cell_text (text, item, cell)
+                     SELECT 'B' || i.id || ' ' || i.label || COALESCE(' follows B' || i.parent, ''),
+                            i.id, NULL
+                     FROM items i;
+                 PRAGMA user_version = 3;",
+            )?;
+        }
         Ok(())
     })();
     match result {
@@ -860,16 +892,34 @@ fn upgrade(conn: &Connection) -> Result<(), rusqlite::Error> {
     }
 }
 
-/// The full text query for what a person typed: each word must match, as the start of a word, so
-/// "sqli port" finds "SQLite" and "port". Words are quoted, so no character has a meaning to the
-/// index; a "word" with no letter or digit is dropped.
-pub fn text_query(typed: &str) -> String {
+/// The full text terms for what a person typed, one per word: a word matches as the start of a
+/// word, so "sqli" finds "SQLite", and a whole reference matches exactly (see [`is_ref`]). Words
+/// are quoted, so no character has a meaning to the index; a "word" with no letter or digit is
+/// dropped.
+pub fn text_terms(typed: &str) -> Vec<String> {
     typed
         .split_whitespace()
         .filter(|w| w.chars().any(char::is_alphanumeric))
-        .map(|w| format!("\"{}\"*", w.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" ")
+        .map(|w| {
+            if is_ref(w) {
+                quoted(w)
+            } else {
+                quoted(w) + "*"
+            }
+        })
+        .collect()
+}
+
+/// A typed word as a quoted phrase, so none of its characters means anything to the index.
+fn quoted(word: &str) -> String {
+    format!("\"{}\"", word.replace('"', "\"\""))
+}
+
+/// Whether a typed word is a whole reference, matched exactly rather than as a word's start: an
+/// item's id (`B12`) or a label's number (`#243`), so "B1" does not also find B10 to B19.
+fn is_ref(word: &str) -> bool {
+    let digits = word.strip_prefix(['B', 'b', '#']).unwrap_or("");
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Sessions written before names existed get their made-up name, once, so no session shows as a

@@ -168,8 +168,14 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   texts: a question, the options, a pick and a text). A trigger on `cells` keeps it, and the
   upgrade from layout 1 fills it from the cells already there, in one transaction that re-reads the
   version.
-- A query takes every word typed as the start of a word, and all must match in one item. Words are
-  quoted, so no character has a meaning to the index.
+- **Layout 3** (owner, 2026-11-22: "full text search should also contain ITEM column, we can search
+  by ref number etc"): one more row per item holds its Item column, the id, the label and the item
+  it follows (`B12 #243 follows B11`). A trigger on `items` keeps it; items never change.
+- A query takes every word typed as the start of a word, and a whole reference (`B12`, `#243`)
+  exactly, so "B1" is not B10. Every word must be somewhere in the item. Each word is looked up
+  on its own and the items intersected, because FTS5 matches one query's words within one row,
+  one cell (found 2026-11-22: "B11 another" found nothing). Words are quoted, so no character
+  has a meaning to the index.
 - `focus-board search WORDS [--json]` covers all projects and statuses; `/api/items?q=` and the
   page's search box narrow the table. Old versions count: a word since edited away still finds its
   item.
@@ -258,7 +264,9 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* A rename reaches the board without a write | `the_watch_follows_a_rename`, `a_rewritten_transcript_is_read_again`, `a_rename_reaches_the_board_without_a_write` |
 | *(owner's ask)* The registry's names, in order | `the_registry_names_running_sessions`, `a_write_takes_the_registry_name` |
 | *(owner's ask)* Full text search | `full_text_search_finds_any_cell_text`, `an_older_board_is_brought_to_layout_2`, `search_finds_items_by_their_text`, `the_page_can_search`, and the page check "searching narrows the table" |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 71 checks |
+| *(owner's ask)* Search by reference, every word anywhere in the item | `search_finds_an_item_by_its_reference`, `every_word_may_sit_in_a_different_cell`, `a_layout_2_board_gains_the_item_column`, `search_finds_an_item_by_its_reference_from_the_command`, `the_page_can_search_by_reference` |
+| *(owner's ask)* One port per platform | `each_platform_has_its_own_port`, `where_page_prints_the_address` |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 77 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next
