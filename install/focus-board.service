@@ -1,7 +1,7 @@
 # The board's server as a systemd user service (Linux). Installed by install/linux.sh.
-# It starts at login, restarts after a crash, and serves the page on 127.0.0.1:8810 only.
+# It starts at login, restarts after a crash, and serves the page on 127.0.0.1 only: port 8810, or 8811 inside WSL.
 [Unit]
-Description=focus-board: the shared board of open questions, on 127.0.0.1:8810
+Description=focus-board: the shared board of open questions, on 127.0.0.1
 
 [Service]
 ExecStart=%h/.cargo/bin/focus-board serve

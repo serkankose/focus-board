@@ -27,4 +27,4 @@ systemctl --user enable focus-board.service
 systemctl --user restart focus-board.service
 systemctl --user --no-pager --lines=0 status focus-board.service
 echo "board: $(focus-board where)"
-echo "page:  http://127.0.0.1:8810"
+echo "page:  $(focus-board where --page)"

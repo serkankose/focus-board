@@ -7,7 +7,7 @@ seen to work yet.
 ## One program
 
 - One Rust binary, `focus-board`, installed with `cargo install` onto `PATH`.
-- `focus-board serve`: the web page and its API, on `127.0.0.1:8810`.
+- `focus-board serve`: the web page and its API, on `127.0.0.1` with this platform's port.
 - Every other subcommand is the sessions' command. It opens the database itself, in its own
   transaction, so it works with the server down.
 - Crates: `rusqlite` (SQLite bundled), `axum` + `tokio` for the server, `clap`, `serde_json`.
@@ -196,9 +196,12 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 
 ## The server and the page
 
-- Binds `127.0.0.1:8810` only.
-- **Every route**, reads included, refuses a `Host` other than `127.0.0.1:8810` or
-  `localhost:8810`. Checking writes only would still let a DNS-rebinding site read the board.
+- Binds 127.0.0.1 only, on one port per platform so boards on one machine never clash (owner,
+  2026-11-22): 8810 on Linux, 8811 inside WSL (its kernel release says "microsoft"), 8812 on
+  Windows, 8813 on macOS. A Linux board in WSL shares `localhost` with the Windows one around it.
+  `focus-board where --page` prints the address; `serve --port` overrides it.
+- **Every route**, reads included, refuses a `Host` other than `127.0.0.1:PORT` or
+  `localhost:PORT`. Checking writes only would still let a DNS-rebinding site read the board.
 - **Every write** also needs a matching `Origin` and the header `X-Focus-Board: 1`, which a
   cross-site form cannot send.
 - Routes: `GET /` (the page), `GET /api/items`, `GET /api/tree`, `GET /api/timeline`,

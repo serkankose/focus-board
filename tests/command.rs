@@ -720,3 +720,35 @@ fn search_finds_items_by_their_text() {
             .contains("nothing found")
     );
 }
+
+/// The owner (2026-11-22): "to prevent clash we need to use different ports for
+/// win/linux/linux(it could be running on wsl)/mac-os". Each platform has its own port, and a
+/// Linux inside WSL (its kernel release says "microsoft") is told apart from plain Linux.
+#[test]
+fn each_platform_has_its_own_port() {
+    use focus_board::port_for;
+    let linux = port_for("linux", "7.2.11-100.fc43.x86_64");
+    let wsl2 = port_for("linux", "5.15.153.1-microsoft-standard-WSL2");
+    let wsl1 = port_for("linux", "4.4.0-19041-Microsoft");
+    let windows = port_for("windows", "");
+    let macos = port_for("macos", "");
+    assert_eq!(
+        (linux, wsl2, wsl1, windows, macos),
+        (8810, 8811, 8811, 8812, 8813)
+    );
+    let mut all = vec![linux, wsl2, windows, macos];
+    all.sort();
+    all.dedup();
+    assert_eq!(all.len(), 4, "no two platforms share a port");
+}
+
+/// `where --page` prints the page's address with this platform's port, the one `serve` uses.
+#[test]
+fn where_page_prints_the_address() {
+    let board = Board::new();
+    let port = focus_board::default_port();
+    let shown = String::from_utf8(board.run(None, &["where", "--page"]).stdout).unwrap();
+    assert_eq!(shown.trim(), format!("http://127.0.0.1:{port}"));
+    let help = String::from_utf8(board.run(None, &["serve", "--help"]).stdout).unwrap();
+    assert!(help.contains(&format!("[default: {port}]")), "{help}");
+}

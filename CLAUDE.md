@@ -89,8 +89,9 @@ tests that prove it. Read it before designing anything. Don't copy it here.
 - **Linux, Windows and macOS** (owner, 2026-11-21, "#122/a"): the code is made portable,
   tested with Windows-style paths on Linux. The install recipes for macOS and Windows wait for a
   machine to try them. See `DESIGN.md`, "Platforms".
-- **Port 8810**, bound to 127.0.0.1 only. It was free and clear of other projects' ranges
-  (26xxx–29xxx, 8787–8798) and of the ephemeral range.
+- **One port per platform**, so boards on one machine never clash (owner, 2026-11-22): 8810 on
+  Linux, 8811 inside WSL, 8812 on Windows, 8813 on macOS. Bound to 127.0.0.1 only. They were free
+  and clear of other projects' ranges (26xxx–29xxx, 8787–8798) and of the ephemeral ranges.
 - **Logs** go to `$XDG_STATE_HOME/focus-board/` (default `~/.local/state/focus-board/`), not
   `/var/log`, so no root step is needed.
 - No emulators. One long-running service: the board's server.

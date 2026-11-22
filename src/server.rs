@@ -21,8 +21,6 @@ use tokio::net::TcpListener;
 use crate::names::NameWatcher;
 use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer, label_in};
 
-/// The board's port (owner, 2026-11-21).
-pub const PORT: u16 = 8810;
 /// The header every write must carry. A cross-site form cannot send a custom header.
 pub const WRITE_HEADER: &str = "x-focus-board";
 

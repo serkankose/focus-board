@@ -6,7 +6,9 @@ project, shares the one board.
 
 ## Using the page
 
-Open **http://127.0.0.1:8810**. It works on this machine only.
+Open **http://127.0.0.1:8810**. It works on this machine only. Each platform has its own port, so
+boards on one machine never clash: 8810 on Linux, 8811 inside WSL, 8812 on Windows, 8813 on macOS.
+`focus-board where --page` prints this machine's address.
 
 - **The table** lists the open items. Each one shows:
   - the question and its lettered options, with the one the session recommends;

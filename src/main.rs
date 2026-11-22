@@ -15,9 +15,7 @@ use focus_board::names::{best_name, registered_names, registry_dir};
 use focus_board::store::{
     Cell, Field, Filter, ItemId, ItemSummary, NewItem, OWNER, Store, Writer, label_in,
 };
-use focus_board::{db_path, home_dir, hook, server};
-
-const PAGE: &str = "http://127.0.0.1:8810";
+use focus_board::{db_path, default_port, home_dir, hook, page_url, server};
 
 #[derive(Parser)]
 #[command(
@@ -117,7 +115,11 @@ enum Cmd {
         json: bool,
     },
     /// Print where the board is kept on this machine.
-    Where,
+    Where {
+        /// Print the page's address instead: 127.0.0.1 with this platform's port.
+        #[arg(long)]
+        page: bool,
+    },
     /// Wait for the owner: ends when the owner has answered the item (or answered again after
     /// --after VERSION) or closed it, and prints it. Run it in the background, so Claude Code
     /// wakes you when the owner saves on the page.
@@ -132,8 +134,9 @@ enum Cmd {
     },
     /// Serve the owner's page on 127.0.0.1 (this machine only).
     Serve {
-        /// The port; 0 picks a free one, and the address served is printed.
-        #[arg(long, default_value_t = server::PORT)]
+        /// The port: by default 8810 on Linux, 8811 in WSL, 8812 on Windows and 8813 on macOS, so
+        /// boards on one machine never clash. 0 picks a free one, and the address served is printed.
+        #[arg(long, default_value_t = default_port())]
         port: u16,
     },
 }
@@ -167,8 +170,9 @@ fn run(cmd: Cmd) -> Result<(), String> {
             Ok(())
         }
         Cmd::Answer { .. } => Err(format!(
-            "refused: the owner answers on the page ({PAGE}). A session's write is never the \
-             owner's answer; write your view with `focus-board feedback`."
+            "refused: the owner answers on the page ({}). A session's write is never the \
+             owner's answer; write your view with `focus-board feedback`.",
+            page_url()
         )),
         Cmd::Whoami { name } => whoami(name),
         Cmd::List {
@@ -213,7 +217,11 @@ fn run(cmd: Cmd) -> Result<(), String> {
             timeout,
         } => wait(&item, after, timeout),
         Cmd::Search { words, json } => search(&words.join(" "), json),
-        Cmd::Where => {
+        Cmd::Where { page: true } => {
+            println!("{}", page_url());
+            Ok(())
+        }
+        Cmd::Where { page: false } => {
             let path = db_path().ok_or("no FOCUS_BOARD_DB and no data folder on this machine")?;
             println!("{}", path.display());
             Ok(())

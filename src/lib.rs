@@ -23,6 +23,30 @@ pub fn db_path() -> Option<PathBuf> {
     Some(base.data_dir().join("focus-board").join("board.sqlite"))
 }
 
+/// The board's port on this machine (owner, 2026-11-22: "to prevent clash we need to use
+/// different ports for win/linux/linux(it could be running on wsl)/mac-os"). A Linux board inside
+/// WSL shares `localhost` with the Windows one around it, so each platform has its own port.
+pub fn default_port() -> u16 {
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
+    port_for(std::env::consts::OS, &kernel)
+}
+
+/// The port for an OS (`std::env::consts::OS`) and, on Linux, its kernel release, which says
+/// "microsoft" inside WSL (WSL 1: `4.4.0-19041-Microsoft`, WSL 2: `5.15.153.1-microsoft-standard-WSL2`).
+pub fn port_for(os: &str, kernel_release: &str) -> u16 {
+    match os {
+        "windows" => 8812,
+        "macos" => 8813,
+        "linux" if kernel_release.to_ascii_lowercase().contains("microsoft") => 8811,
+        _ => 8810,
+    }
+}
+
+/// The page's address on this machine.
+pub fn page_url() -> String {
+    format!("http://127.0.0.1:{}", default_port())
+}
+
 /// The home folder: `HOME` where set (Linux, macOS, Git Bash on Windows), else the OS's own
 /// (`%USERPROFILE%` on Windows).
 pub fn home_dir() -> Option<PathBuf> {

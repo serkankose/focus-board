@@ -116,6 +116,8 @@ check "a rename is not followed"     store.rs store a_session_name_follows_a_ren
 check "old writers stay unnamed"     store.rs store a_session_name_follows_a_rename 's/fill_names\(&conn\)\?;//'
 check "names not read on write"      main.rs command a_session_shows_its_rename_title 's/who\.name = name;/let _ = name;/'
 check "wait ignores the answer"      main.rs command wait_ends_when_the_owner_answers 's/if answered > after\.unwrap_or\(0\) \|\| closed \{/if closed {/'
+check "WSL shares the Linux port"    lib.rs command each_platform_has_its_own_port 's/"linux" if kernel_release/"linux" if false \&\& kernel_release/'
+check "Windows shares a port"        lib.rs command each_platform_has_its_own_port 's/"windows" => 8812/"windows" => 8810/'
 check "own rewrite denied when re-sent" hook.rs command the_hooks_own_rewrite_passes_when_sent_again 's/&& !sets_identity\(rest\)/\&\& false \&\& !sets_identity(rest)/'
 check "a title beats the owner's rename" names.rs names the_registry_names_running_sessions 's/from\("user"\)\n(\s*)\.or_else\(\|\| names\.title\.clone\(\)\)/names.title.clone()\n$1.or_else(|| from("user"))/'
 check "derived names are used"       names.rs names the_registry_names_running_sessions 's/\.or_else\(\|\| names\.label\.clone\(\)\)\n\}/.or_else(|| names.label.clone())\n        .or_else(|| from("derived"))\n}/'
