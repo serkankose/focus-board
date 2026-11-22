@@ -110,6 +110,7 @@ fn router(app: App) -> Router {
         .route("/api/changes", get(changes))
         .route("/api/answer", post(answer))
         .route("/api/status", post(status))
+        .route("/api/review", get(review).post(ask_review))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
         .layer(middleware::map_response(never_framed))
         .with_state(app)
@@ -386,7 +387,49 @@ async fn changes(State(app): State<App>, Query(q): Query<HashMap<String, String>
             "last": last,
             "changed": last > after,
             "renames": renames,
+            "reviews": store.review_mark()?,
         })))
+    })
+    .await
+}
+
+/// The owner's newest review request and the sessions it is for, each with its items not closed
+/// and whether, how and when it saw the request (owner, 2026-11-22, B22 "b").
+async fn review(State(app): State<App>) -> ApiResult {
+    on_store(&app, move |store| {
+        let latest = store.latest_review()?;
+        let sessions: Vec<Value> = store
+            .review_targets()?
+            .into_iter()
+            .map(|t| {
+                let items: Vec<Value> = t
+                    .items
+                    .iter()
+                    .map(|(id, status)| json!({ "id": format!("B{id}"), "status": status }))
+                    .collect();
+                json!({
+                    "writer": t.writer,
+                    "items": items,
+                    "seen": t.seen.map(|(how, at)| json!({ "how": how, "at": at })),
+                })
+            })
+            .collect();
+        Ok(Json(json!({
+            "latest": latest.map(|r| json!({ "id": r.id, "asked_at": r.asked_at })),
+            "sessions": sessions,
+        })))
+    })
+    .await
+}
+
+/// One press of the page's review button: asks every session with items not closed to review
+/// them. Guarded like every write.
+async fn ask_review(State(app): State<App>) -> ApiResult {
+    on_store(&app, move |store| {
+        let request = store.ask_for_review()?;
+        Ok(Json(
+            json!({ "id": request.id, "asked_at": request.asked_at }),
+        ))
     })
     .await
 }

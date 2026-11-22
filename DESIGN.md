@@ -183,6 +183,31 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   a closed item needs the filter set to "all". The owner kept it so (2026-11-22, B18 "b"), rather
   than have typing switch the filter.
 
+## The review button (owner, 2026-11-22, B22 "b")
+
+- **Layout 4**: `review_requests` holds one row per press of the page's button; `review_seen`
+  holds which writer saw which press, how (`hook` or `wait`), keyed by both, so a press reaches a
+  session once. Both append-only. Only the page presses (`POST /api/review`, guarded like every
+  write); `GET /api/review` lists each session with items not closed and whether it has seen the
+  newest press, and the change feed counts both tables, since they move no cell.
+- **The hook's note.** The hook command, in `main`, adds the note to its answer as
+  `additionalContext`: alone, or beside the rewrite of a board command; never on a denial, which
+  is not even looked up then. `hook::pre_tool_use` itself still never reads the board.
+  `store::review_note_for` opens the board read-write without creating it, waits at most 200 ms for
+  a lock, leaves a board of another layout alone, and never fails. It matches the exact writer
+  (session id and agent id, so a subagent never gets its parent's items), lists only items not
+  closed, by id and status, never their text, and delivers only when its `INSERT OR IGNORE` of the
+  seen mark wins. This is the hook's one write. Measured (2026-11-22, release build, median of 40
+  calls, process start included): 0.8 ms before the board read, 1.4 ms with it and no press, 1.7
+  ms when it delivers a note. The hook's timeout is 5 s.
+- **`wait --mine`**: one background wait per session while it has items open. It ends on news
+  about the session's own items (the owner answers or closes one), on a press it is first to mark
+  seen, at once when no item is open, when the session's Claude Code process (`CLAUDE_PID`,
+  checked by `kill -0` every 30 s) is gone, and after a time limit, 24 hours by default. So an idle
+  session wakes about once a day.
+- **A wait prints through the board it opened** (2026-11-22): opening it again refused a layout
+  upgraded meanwhile, and the B22 wait died on "update focus-board" instead of printing the answer.
+
 ## The command
 
 | Command | Does |
@@ -254,7 +279,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(review R6)* A shared folder name does not mix projects | `a_shared_folder_name_does_not_mix_projects` |
 | *(review R8)* The timeline is cut and says so; active items on the server | `timeline_is_cut_and_says_so`, `timeline_cut_and_active_filter` |
 | *(review R10, R11, G8)* Repeated letters, a newer layout, the author-only question | `a_repeated_option_letter_is_refused`, `a_newer_layout_is_refused`, `only_the_author_writes_the_question` |
-| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 15 checks in headless Firefox |
+| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 16 checks in headless Firefox |
 | *(owner's ask)* Each item keeps where it was raised: repo, worktree, branch, path | `item_context_is_recorded_at_raise_time`, the branch asserts in `projects_and_worktrees_stay_apart`, and the page check "each item shows its repo, worktree, branch and full path" |
 | A board from before layout versions is refused | `an_unversioned_board_is_refused` |
 | *(review R3)* A copied session finds its parent and sits under it | `fork_parent_reads_the_transcript`, `a_copied_session_files_under_its_parent`, `a_copied_session_writes_under_its_parent` (the binary, through the hook), and the page check "a copied session sits under the session it was copied from" |
@@ -266,7 +291,9 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* Full text search | `full_text_search_finds_any_cell_text`, `an_older_board_is_brought_to_layout_2`, `search_finds_items_by_their_text`, `the_page_can_search`, and the page check "searching narrows the table" |
 | *(owner's ask)* Search by reference, every word anywhere in the item | `search_finds_an_item_by_its_reference`, `every_word_may_sit_in_a_different_cell`, `a_layout_2_board_gains_the_item_column`, `search_finds_an_item_by_its_reference_from_the_command`, `the_page_can_search_by_reference` |
 | *(owner's ask)* One port per platform | `each_platform_has_its_own_port`, `where_page_prints_the_address` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 77 checks |
+| A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
+| *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 94 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

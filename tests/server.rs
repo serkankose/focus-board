@@ -596,3 +596,37 @@ fn the_page_can_search_by_reference() {
     let (_, miss) = board.get("/api/items?q=B2");
     assert_eq!(miss["items"], json!([]));
 }
+
+/// The review button (B22 "b"): a press is a write like any other, refused without the page's
+/// header. The state names each session with items not closed, and whether it has seen the press;
+/// the change feed moves with both.
+#[test]
+fn the_review_button_asks_and_shows_who_has_seen_it() {
+    let board = Board::start();
+    let (_, before) = board.get("/api/review");
+    assert_eq!(before["latest"], Value::Null);
+    let (refused, _) = request(
+        board.port,
+        "POST",
+        "/api/review",
+        &[("Host", board.host())],
+        Some("{}"),
+    );
+    assert_eq!(refused, 403, "no page header, no press");
+    let (_, feed) = board.get("/api/changes?after=0");
+    assert_eq!(feed["reviews"], 0);
+    let (status, asked) = board.post("/api/review", json!({}));
+    assert_eq!(status, 200, "{asked}");
+    let (_, state) = board.get("/api/review");
+    assert_eq!(state["latest"]["id"], asked["id"]);
+    assert_eq!(
+        state["sessions"][0]["items"],
+        json!([{ "id": "B1", "status": "open" }])
+    );
+    assert_eq!(state["sessions"][0]["seen"], Value::Null);
+    assert!(focus_board::store::review_note_for(&board.db, "s1", "").is_some());
+    let (_, state) = board.get("/api/review");
+    assert_eq!(state["sessions"][0]["seen"]["how"], "hook");
+    let (_, feed) = board.get("/api/changes?after=0");
+    assert_eq!(feed["reviews"], 2, "one press, one seen mark");
+}

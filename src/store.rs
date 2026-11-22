@@ -94,7 +94,7 @@ COMMIT;
 /// The board's layout version, kept in SQLite's `user_version` and set by [`SCHEMA`]. A board
 /// written by a newer focus-board is refused rather than read with the wrong layout. Since the
 /// triggers forbid changing rows in place, a layout change is a new version (review R11).
-pub const LAYOUT: i64 = 3;
+pub const LAYOUT: i64 = 4;
 
 /// The rows a timeline draws from: `?1` after this row, `?2` project, `?3` workspace, `?4` node.
 /// A node's timeline holds the writes on the items raised in that branch, whoever made them (the
@@ -670,6 +670,107 @@ impl Store {
         Ok(found.unwrap_or_default().into_iter().collect())
     }
 
+    /// The owner asks every session with items not closed to review them: one press of the page's
+    /// button (owner, 2026-11-22, B22 "b"). Only the page's server calls it; the command cannot.
+    pub fn ask_for_review(&mut self) -> Result<ReviewRequest, rusqlite::Error> {
+        self.conn.execute(
+            "INSERT INTO review_requests (asked_at) VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            [],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.conn.query_row(
+            "SELECT id, asked_at FROM review_requests WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(ReviewRequest {
+                    id: r.get(0)?,
+                    asked_at: r.get(1)?,
+                })
+            },
+        )
+    }
+
+    /// The owner's newest review request, if any.
+    pub fn latest_review(&self) -> Result<Option<ReviewRequest>, rusqlite::Error> {
+        latest_review(&self.conn)
+    }
+
+    /// Whether `writer` has seen review request `request`.
+    pub fn has_seen_review(&self, request: i64, writer: WriterId) -> Result<bool, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM review_seen WHERE request = ?1 AND writer = ?2)",
+            params![request, writer],
+            |r| r.get(0),
+        )
+    }
+
+    /// Marks review request `request` seen by `writer`, `how` (`hook` or `wait`), and says whether
+    /// this call did it. Only the first marking delivers, so a press reaches a session once, even
+    /// when two of its calls race.
+    pub fn mark_review_seen(
+        &self,
+        request: i64,
+        writer: WriterId,
+        how: &str,
+    ) -> Result<bool, rusqlite::Error> {
+        mark_review_seen(&self.conn, request, writer, how)
+    }
+
+    /// The writer's own items that are not closed, oldest first, with their status.
+    pub fn open_items_of(
+        &self,
+        writer: WriterId,
+    ) -> Result<Vec<(ItemId, String)>, rusqlite::Error> {
+        Ok(self
+            .items(&Filter::default())?
+            .into_iter()
+            .filter(|i| i.author == writer && i.status != "closed")
+            .map(|i| (i.id, i.status))
+            .collect())
+    }
+
+    /// For the page: each session writer with items not closed, those items, and how and when it
+    /// saw the owner's newest review request, if it has.
+    pub fn review_targets(&self) -> Result<Vec<ReviewTarget>, rusqlite::Error> {
+        let latest = self.latest_review()?;
+        let mut open: std::collections::BTreeMap<WriterId, Vec<(ItemId, String)>> =
+            std::collections::BTreeMap::new();
+        for i in self.items(&Filter::default())? {
+            if i.status != "closed" && i.author != OWNER {
+                open.entry(i.author).or_default().push((i.id, i.status));
+            }
+        }
+        let mut out = Vec::new();
+        for (writer, items) in open {
+            let seen = match &latest {
+                Some(request) => self
+                    .conn
+                    .query_row(
+                        "SELECT how, seen_at FROM review_seen WHERE request = ?1 AND writer = ?2",
+                        params![request.id, writer],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?,
+                None => None,
+            };
+            out.push(ReviewTarget {
+                writer,
+                items,
+                seen,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Moves whenever the owner asks for a review or a session sees one, for the page's feed.
+    pub fn review_mark(&self) -> Result<i64, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT (SELECT count(*) FROM review_requests) + (SELECT count(*) FROM review_seen)",
+            [],
+            |r| r.get(0),
+        )
+    }
+
     /// When each writer last wrote: `(writer, row, time)` of its newest cell.
     pub fn last_writes(&self) -> Result<Vec<(WriterId, i64, String)>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
@@ -845,6 +946,9 @@ fn resolve_writer(tx: &Transaction, who: &Identity, place: &Place) -> Result<Wri
 ///   search by ref number etc"): the Item column's text, the item's id, its label and the item it
 ///   follows (`B12 #243 follows B11`), as one more row per item in `cell_text`, with no cell. A
 ///   trigger on `items` keeps it (items never change), filled from the items already there.
+/// - Layout 4 (2026-11-22, the owner's B22 "b"): the owner's review requests, one row per press
+///   of the page's button (`review_requests`), and which session saw each, how (`review_seen`,
+///   keyed by request and writer, so a press reaches each session once). Both append-only.
 fn upgrade(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let result = (|| {
@@ -879,6 +983,34 @@ fn upgrade(conn: &Connection) -> Result<(), rusqlite::Error> {
                             i.id, NULL
                      FROM items i;
                  PRAGMA user_version = 3;",
+            )?;
+        }
+        if layout < 4 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS review_requests (
+                     id        INTEGER PRIMARY KEY,
+                     asked_at  TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS review_seen (
+                     request   INTEGER NOT NULL REFERENCES review_requests(id),
+                     writer    INTEGER NOT NULL REFERENCES writers(id),
+                     how       TEXT NOT NULL CHECK (how IN ('hook', 'wait')),
+                     seen_at   TEXT NOT NULL,
+                     PRIMARY KEY (request, writer)
+                 );
+                 CREATE TRIGGER IF NOT EXISTS review_requests_never_changed
+                     BEFORE UPDATE ON review_requests
+                     BEGIN SELECT RAISE(ABORT, 'review requests are never changed'); END;
+                 CREATE TRIGGER IF NOT EXISTS review_requests_never_deleted
+                     BEFORE DELETE ON review_requests
+                     BEGIN SELECT RAISE(ABORT, 'review requests are never deleted'); END;
+                 CREATE TRIGGER IF NOT EXISTS review_seen_never_changed
+                     BEFORE UPDATE ON review_seen
+                     BEGIN SELECT RAISE(ABORT, 'seen records are never changed'); END;
+                 CREATE TRIGGER IF NOT EXISTS review_seen_never_deleted
+                     BEFORE DELETE ON review_seen
+                     BEGIN SELECT RAISE(ABORT, 'seen records are never deleted'); END;
+                 PRAGMA user_version = 4;",
             )?;
         }
         Ok(())
@@ -920,6 +1052,112 @@ fn quoted(word: &str) -> String {
 fn is_ref(word: &str) -> bool {
     let digits = word.strip_prefix(['B', 'b', '#']).unwrap_or("");
     !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// One press of the page's review button.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewRequest {
+    pub id: i64,
+    pub asked_at: String,
+}
+
+/// A session the owner's review request is for: its items not closed, as `(id, status)`, and
+/// `(how, when)` it saw the newest request, if it has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewTarget {
+    pub writer: WriterId,
+    pub items: Vec<(ItemId, String)>,
+    pub seen: Option<(String, String)>,
+}
+
+fn latest_review(conn: &Connection) -> Result<Option<ReviewRequest>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT id, asked_at FROM review_requests ORDER BY id DESC LIMIT 1",
+        [],
+        |r| {
+            Ok(ReviewRequest {
+                id: r.get(0)?,
+                asked_at: r.get(1)?,
+            })
+        },
+    )
+    .optional()
+}
+
+fn mark_review_seen(
+    conn: &Connection,
+    request: i64,
+    writer: WriterId,
+    how: &str,
+) -> Result<bool, rusqlite::Error> {
+    let added = conn.execute(
+        "INSERT OR IGNORE INTO review_seen (request, writer, how, seen_at)
+         VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        params![request, writer, how],
+    )?;
+    Ok(added == 1)
+}
+
+/// What a session is told when the owner asks it to review: fixed words and its items' ids and
+/// statuses only. No question, label or feedback: those are session-written text, and a hook's
+/// note reaches a session with the owner's weight.
+pub fn review_note(items: &[(ItemId, String)]) -> String {
+    let list = items
+        .iter()
+        .map(|(id, status)| format!("B{id} ({status})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "focus-board: the owner asks you to review your items on the board: {list}. Read each \
+         with `focus-board show B<n>`, act on the owner's answer, and close each item once it is \
+         settled."
+    )
+}
+
+/// The review note for one session's Bash call (owner, 2026-11-22, B22 "b"), or `None`: when the
+/// owner's newest review request is one this exact writer (session id and agent id, so a subagent
+/// never gets its parent's items) has not seen, and it has items not closed. The request is then
+/// marked seen (`hook`), and only the call whose marking wins gets the note.
+///
+/// The hook runs on every Bash call of every session, so this never goes through
+/// [`Store::open`], which takes a write lock and may upgrade the board. It never creates the board,
+/// never touches a board of another layout, waits at most 200 ms for a lock, and never fails:
+/// any error means no note.
+pub fn review_note_for(db: &Path, session_id: &str, agent_id: &str) -> Option<String> {
+    use rusqlite::OpenFlags;
+    if session_id.is_empty() {
+        return None;
+    }
+    let conn = Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    conn.busy_timeout(Duration::from_millis(200)).ok()?;
+    let layout: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .ok()?;
+    if layout != LAYOUT {
+        return None;
+    }
+    let request = latest_review(&conn).ok()??;
+    let writer: WriterId = conn
+        .query_row(
+            "SELECT id FROM writers WHERE kind = 'session' AND session_id = ?1 AND agent_id = ?2",
+            params![session_id, agent_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()??;
+    let store = Store { conn };
+    if store.has_seen_review(request.id, writer).ok()? {
+        return None;
+    }
+    let items = store.open_items_of(writer).ok()?;
+    if items.is_empty() || !store.mark_review_seen(request.id, writer, "hook").ok()? {
+        return None;
+    }
+    Some(review_note(&items))
 }
 
 /// Sessions written before names existed get their made-up name, once, so no session shows as a

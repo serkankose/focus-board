@@ -86,12 +86,14 @@ dialog ol { padding-left: 18px; }
     </select>
   </label>
   <input id="q" type="search" placeholder="search all text" aria-label="Search">
+  <button id="review" type="button" title="Ask every session with items not closed to review them">Ask sessions to review</button>
   <span id="scope" class="muted"></span>
   <span id="live" class="muted">connecting…</span>
 </header>
 <main>
   <nav aria-label="Projects, workspaces and sessions"><ul id="tree"></ul></nav>
   <section>
+    <p id="reviewed" class="muted" hidden></p>
     <table>
       <thead><tr><th>Item</th><th>Question</th><th>Status</th><th>Your answer</th><th>Feedback</th></tr></thead>
       <tbody id="items"></tbody>
@@ -182,9 +184,9 @@ async function refresh() {
   state.busy = true;
   try {
     const q = query();
-    const [tree, items, timeline] = await Promise.all([
+    const [tree, items, timeline, review] = await Promise.all([
       getJSON("/api/tree"), getJSON("/api/items?" + q),
-      getJSON("/api/timeline?" + q + "&limit=" + TIMELINE_MAX),
+      getJSON("/api/timeline?" + q + "&limit=" + TIMELINE_MAX), getJSON("/api/review"),
     ]);
     state.writers = new Map(tree.writers.map((w) => [w.id, w]));
     state.owner = tree.writers.find((w) => w.kind === "owner")?.id ?? null;
@@ -195,6 +197,7 @@ async function refresh() {
     renderTree();
     keepFocus(renderItems);
     renderTimeline(timeline.entries, timeline.total);
+    renderReview(review);
     setLive(null);
   } catch (e) {
     setLive(e.message);
@@ -208,9 +211,11 @@ async function poll() {
   try {
     const c = await getJSON("/api/changes?after=" + state.last);
     setLive(null);
-    // A rename moves no row, so the feed counts renames separately.
-    if (c.changed || c.renames !== state.renames) {
+    // A rename, a press of the review button and a session seeing it move no cell, so the
+    // feed counts them separately.
+    if (c.changed || c.renames !== state.renames || c.reviews !== state.reviews) {
       state.renames = c.renames;
+      state.reviews = c.reviews;
       await refresh();
     }
   } catch (e) {
@@ -464,6 +469,26 @@ async function showHistory(itemId, writerId, field) {
 
 $("project").addEventListener("change", (e) => select(e.target.value ? "project" : null, e.target.value));
 $("status").addEventListener("change", () => refresh());
+// The review button (owner, 2026-11-22, B22 "b") asks every session with items not closed to
+// review them. The line above the table says who has seen it, so the owner knows where to type.
+$("review").addEventListener("click", async () => {
+  const r = await postJSON("/api/review", {});
+  if (!r.ok) { setLive(r.body.error || "the press was refused (" + r.status + ")"); return; }
+  await refresh();
+});
+function renderReview(review) {
+  const line = $("reviewed");
+  if (!review.latest) { line.hidden = true; return; }
+  const seen = review.sessions.filter((s) => s.seen);
+  const waiting = review.sessions.filter((s) => !s.seen);
+  const names = (list) => list.map((s) => label(s.writer) + (s.seen ? " (" + s.seen.how + ")" : "")).join(", ");
+  line.hidden = false;
+  line.replaceChildren(
+    "Review asked " + clock(review.latest.asked_at) + ". ",
+    seen.length ? "Seen by " + names(seen) + ". " : "",
+    waiting.length ? el("b", {}, "Not yet: " + names(waiting) + ". Type to them.")
+      : review.sessions.length ? "Every session has seen it." : "No session has items open.");
+}
 let typing = null;
 $("q").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(refresh, 250); });
 refresh();

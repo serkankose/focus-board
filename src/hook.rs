@@ -6,6 +6,10 @@
 //! The rewrite returns only `updatedInput`, never an `allow`, so the normal permission checks
 //! still run on the rewritten command. The one decision the hook makes only tightens: a command
 //! that sets the identity variables itself is denied (see [`sets_identity`]).
+//!
+//! It also passes the owner's review note on to the session as context (B22 "b", see
+//! [`with_note`] and `store::review_note_for`). That is the hook's one write: the session's mark
+//! that it has seen the request.
 
 use serde_json::{Value, json};
 
@@ -159,9 +163,113 @@ fn is_assignment(word: &str) -> bool {
     }
 }
 
+/// The session and agent ids of a Bash call's hook input, whom the owner's review note is for.
+pub fn session_of(input: &str) -> Option<(String, String)> {
+    let data: Value = serde_json::from_str(input).ok()?;
+    if data.get("tool_name")?.as_str()? != "Bash" {
+        return None;
+    }
+    let text = |key: &str| {
+        data.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let (session, agent) = (text("session_id"), text("agent_id"));
+    (!session.is_empty()).then_some((session, agent))
+}
+
+/// The hook's answer with the owner's review note (B22 "b") added as context for the session:
+/// alongside a rewrite, or alone. Only context: never a change to the command, so auto mode's
+/// review of the call stands. A denial stays as it is, and the note is then not even looked up,
+/// so the press is not marked seen by a call that never showed it.
+pub fn with_note(out: Option<String>, note: impl FnOnce() -> Option<String>) -> Option<String> {
+    let denied = out
+        .as_deref()
+        .is_some_and(|o| o.contains("\"permissionDecision\""));
+    if denied {
+        return out;
+    }
+    let Some(note) = note() else {
+        return out;
+    };
+    let Some(text) = out else {
+        return Some(
+            json!({
+                "hookSpecificOutput": { "hookEventName": "PreToolUse", "additionalContext": note }
+            })
+            .to_string(),
+        );
+    };
+    let Ok(mut value) = serde_json::from_str::<Value>(&text) else {
+        return Some(text);
+    };
+    match value
+        .get_mut("hookSpecificOutput")
+        .and_then(Value::as_object_mut)
+    {
+        Some(specific) => {
+            specific.insert("additionalContext".into(), json!(note));
+            Some(value.to_string())
+        }
+        None => Some(text),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_review_note_is_context_only_and_never_on_a_denial() {
+        let note = || Some("review B1".to_string());
+        let alone: Value = serde_json::from_str(&with_note(None, note).unwrap()).unwrap();
+        assert_eq!(
+            alone["hookSpecificOutput"]["additionalContext"],
+            "review B1"
+        );
+        assert!(alone["hookSpecificOutput"].get("updatedInput").is_none());
+
+        let rewrite = json!({ "hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "updatedInput": { "command": "x" } } })
+        .to_string();
+        let both: Value = serde_json::from_str(&with_note(Some(rewrite), note).unwrap()).unwrap();
+        assert_eq!(both["hookSpecificOutput"]["additionalContext"], "review B1");
+        assert_eq!(both["hookSpecificOutput"]["updatedInput"]["command"], "x");
+
+        let deny = json!({ "hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny" } })
+        .to_string();
+        let looked_up = std::cell::Cell::new(false);
+        let kept = with_note(Some(deny.clone()), || {
+            looked_up.set(true);
+            Some("review B1".into())
+        });
+        assert_eq!(kept, Some(deny), "a denial stays as it is");
+        assert!(
+            !looked_up.get(),
+            "and the note is not looked up, so not marked seen"
+        );
+
+        assert_eq!(with_note(None, || None), None, "no note, no output");
+    }
+
+    #[test]
+    fn the_note_goes_to_the_exact_writer_of_a_bash_call() {
+        let input = |tool: &str, agent: &str| {
+            json!({ "tool_name": tool, "session_id": "s1", "agent_id": agent }).to_string()
+        };
+        assert_eq!(
+            session_of(&input("Bash", "")),
+            Some(("s1".into(), "".into()))
+        );
+        assert_eq!(
+            session_of(&input("Bash", "a1")),
+            Some(("s1".into(), "a1".into()))
+        );
+        assert_eq!(session_of(&input("Read", "")), None);
+        assert_eq!(session_of("not json"), None);
+    }
 
     #[test]
     fn runs_board_finds_the_command_word_only() {

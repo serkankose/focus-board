@@ -7,7 +7,7 @@ use std::thread;
 
 use focus_board::identity::{Identity, IdentityError, Place, fork_parent, made_up_name};
 use focus_board::store::{
-    Field, Filter, LAYOUT, NewItem, OWNER, OpenError, Store, WriteError, label_in,
+    Field, Filter, LAYOUT, NewItem, OWNER, OpenError, Store, WriteError, label_in, review_note_for,
 };
 use serde_json::json;
 
@@ -1542,4 +1542,142 @@ fn every_word_may_sit_in_a_different_cell() {
         found("sqlite fine").is_empty(),
         "words in two different items"
     );
+}
+
+/// The owner's review button (2026-11-22, B22 "b"): each session with items not closed gets one
+/// note per press, naming only its own items, by id and status. A subagent gets only its own, a
+/// closed item is left out, and a second press reaches the session again.
+#[test]
+fn a_review_request_reaches_each_session_once() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    let here = place("p", "p");
+    let (one, two) = (session("s1"), session("s2"));
+    let sub = Identity {
+        agent_id: "a1".into(),
+        agent_type: "Explore".into(),
+        ..session("s1")
+    };
+    let labelled = NewItem {
+        label: "#7".into(),
+        ..question("Keep SQLite?")
+    };
+    let asked = store.add_item(&one, &here, &labelled).unwrap();
+    let closed = store.add_item(&one, &here, &question("Old one?")).unwrap();
+    store
+        .write_as_session(&one, &here, closed, Field::Status, &json!("closed"), None)
+        .unwrap();
+    let theirs = store
+        .add_item(&two, &here, &question("Which port?"))
+        .unwrap();
+    let subs = store
+        .add_item(&sub, &here, &question("Search where?"))
+        .unwrap();
+    store
+        .owner_answer(asked, &json!({ "pick": "a" }), None)
+        .unwrap();
+
+    let note = |s: &str, a: &str| review_note_for(&db, s, a);
+    assert_eq!(note("s1", ""), None, "no request yet");
+    store.ask_for_review().unwrap();
+    let first = note("s1", "").unwrap();
+    assert!(first.contains(&format!("B{asked} (answered)")), "{first}");
+    for not_there in [
+        format!("B{closed} ("),
+        format!("B{theirs} ("),
+        format!("B{subs} ("),
+    ] {
+        assert!(!first.contains(&not_there), "{not_there} in {first}");
+    }
+    assert!(
+        !first.contains("Keep SQLite") && !first.contains("#7"),
+        "no session-written text: {first}"
+    );
+    assert_eq!(note("s1", ""), None, "once per press");
+    let subs_note = note("s1", "a1").unwrap();
+    assert!(
+        subs_note.contains(&format!("B{subs} (open)"))
+            && !subs_note.contains(&format!("B{asked} (")),
+        "the subagent gets its own item only: {subs_note}"
+    );
+    assert!(
+        note("s2", "")
+            .unwrap()
+            .contains(&format!("B{theirs} (open)"))
+    );
+    assert_eq!(note("s3", ""), None, "a session with no items");
+    store.ask_for_review().unwrap();
+    assert!(note("s1", "").is_some(), "a second press reaches it again");
+}
+
+/// The hook's read never creates a board, and leaves a board of another layout alone.
+#[test]
+fn no_note_from_a_missing_board_or_another_layout() {
+    let (dir, db) = board();
+    let missing = dir.path().join("none.sqlite");
+    assert_eq!(review_note_for(&missing, "s1", ""), None);
+    assert!(!missing.exists(), "the hook never creates a board");
+    let mut store = Store::open(&db).unwrap();
+    store
+        .add_item(&session("s1"), &place("p", "p"), &question("Q?"))
+        .unwrap();
+    store.ask_for_review().unwrap();
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.pragma_update(None, "user_version", LAYOUT + 1).unwrap();
+    assert_eq!(
+        review_note_for(&db, "s1", ""),
+        None,
+        "a newer layout is left alone"
+    );
+    raw.pragma_update(None, "user_version", LAYOUT).unwrap();
+    assert!(
+        review_note_for(&db, "s1", "").is_some(),
+        "the same board at this layout"
+    );
+}
+
+/// Review requests and seen marks are kept like everything else: never changed, never deleted.
+#[test]
+fn review_requests_and_seen_marks_are_never_changed() {
+    let (_dir, db) = board();
+    let mut store = Store::open(&db).unwrap();
+    store
+        .add_item(&session("s1"), &place("p", "p"), &question("Q?"))
+        .unwrap();
+    store.ask_for_review().unwrap();
+    assert!(review_note_for(&db, "s1", "").is_some());
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    // Only the triggers may refuse: with foreign keys on, the seen mark alone would keep its
+    // request from being deleted, and the test would pass without the rule (break-it, 2026-11-22).
+    raw.pragma_update(None, "foreign_keys", "OFF").unwrap();
+    for sql in [
+        "UPDATE review_requests SET asked_at = 'x'",
+        "DELETE FROM review_requests",
+        "UPDATE review_seen SET how = 'wait'",
+        "DELETE FROM review_seen",
+    ] {
+        assert!(raw.execute(sql, []).is_err(), "{sql} must be refused");
+    }
+}
+
+/// A layout 3 board gains the review tables on open.
+#[test]
+fn a_layout_3_board_gains_review_requests() {
+    let (_dir, db) = board();
+    drop(Store::open(&db).unwrap());
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.execute_batch(
+        "DROP TRIGGER review_seen_never_deleted; DROP TRIGGER review_seen_never_changed;
+         DROP TRIGGER review_requests_never_deleted; DROP TRIGGER review_requests_never_changed;
+         DROP TABLE review_seen; DROP TABLE review_requests; PRAGMA user_version = 3;",
+    )
+    .unwrap();
+    drop(raw);
+    let mut store = Store::open(&db).unwrap();
+    assert_eq!(store.ask_for_review().unwrap().id, 1);
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    let version: i64 = raw
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, LAYOUT);
 }

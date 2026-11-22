@@ -13,7 +13,8 @@ use focus_board::identity::{
 };
 use focus_board::names::{best_name, registered_names, registry_dir};
 use focus_board::store::{
-    Cell, Field, Filter, ItemId, ItemSummary, NewItem, OWNER, Store, Writer, label_in,
+    Cell, Field, Filter, ItemId, ItemSummary, NewItem, OWNER, Store, Writer, WriterId, label_in,
+    review_note, review_note_for,
 };
 use focus_board::{db_path, default_port, home_dir, hook, page_url, server};
 
@@ -125,13 +126,20 @@ enum Cmd {
     /// --after VERSION) or closed it, and prints it. Run it in the background, so Claude Code
     /// wakes you when the owner saves on the page.
     Wait {
-        item: String,
+        #[arg(required_unless_present = "mine")]
+        item: Option<String>,
         /// The version of the owner's answer you already read; wait for a newer one.
         #[arg(long, value_name = "VERSION")]
         after: Option<i64>,
-        /// Give up after this many seconds, with exit 1.
+        /// Give up after this many seconds: with exit 1 for one item; with --mine, a message
+        /// (default 24 hours).
         #[arg(long, value_name = "SECONDS")]
         timeout: Option<u64>,
+        /// Wait for anything about your own items instead: the owner answers or closes one, or
+        /// asks you on the page to review them. Ends at once when you have none open, and when
+        /// your Claude Code session is gone. Keep one running while you have items open.
+        #[arg(long, conflicts_with_all = ["item", "after"])]
+        mine: bool,
     },
     /// Serve the owner's page on 127.0.0.1 (this machine only).
     Serve {
@@ -163,9 +171,15 @@ fn run(cmd: Cmd) -> Result<(), String> {
     match cmd {
         Cmd::Hook(HookCmd::PreToolUse) => {
             let mut input = String::new();
-            if std::io::stdin().read_to_string(&mut input).is_ok()
-                && let Some(out) = hook::pre_tool_use(&input)
-            {
+            if std::io::stdin().read_to_string(&mut input).is_err() {
+                return Ok(());
+            }
+            // The owner's review request reaches a session at its next Bash call (B22 "b").
+            let note = || {
+                let (session, agent) = hook::session_of(&input)?;
+                review_note_for(&db_path()?, &session, &agent)
+            };
+            if let Some(out) = hook::with_note(hook::pre_tool_use(&input), note) {
                 println!("{out}");
             }
             Ok(())
@@ -213,10 +227,16 @@ fn run(cmd: Cmd) -> Result<(), String> {
         Cmd::History { item, json } => history(&item, json),
         Cmd::Serve { port } => serve(port),
         Cmd::Wait {
+            mine: true,
+            timeout,
+            ..
+        } => wait_mine(timeout),
+        Cmd::Wait {
             item,
             after,
             timeout,
-        } => wait(&item, after, timeout),
+            ..
+        } => wait(item.as_deref().unwrap_or_default(), after, timeout),
         Cmd::Search { words, json } => search(&words.join(" "), json),
         Cmd::Where { page: true } => {
             println!("{}", page_url());
@@ -616,6 +636,109 @@ fn wait(item: &str, after: Option<i64>, timeout: Option<u64>) -> Result<(), Stri
         }
         std::thread::sleep(Duration::from_secs(1));
     }
+}
+
+/// The owner's marks on each of a writer's items: their answer's version, and whether the owner
+/// closed it. A change in either is news for the writer.
+fn owner_marks(
+    store: &Store,
+    writer: WriterId,
+) -> Result<std::collections::BTreeMap<ItemId, (i64, bool)>, String> {
+    let mut marks = std::collections::BTreeMap::new();
+    let items = store.items(&Filter::default()).map_err(|e| e.to_string())?;
+    for item in items.iter().filter(|i| i.author == writer) {
+        let cells = store.current(item.id).map_err(|e| e.to_string())?;
+        let owner = |field: &str| cells.iter().find(|c| c.writer == OWNER && c.field == field);
+        let answered = owner("answer").map_or(0, |c| c.version);
+        let closed = owner("status").is_some_and(|c| c.value == json!("closed"));
+        marks.insert(item.id, (answered, closed));
+    }
+    Ok(marks)
+}
+
+/// Waits for anything about this session's own items (owner, 2026-11-22, B22 "b"): the owner
+/// answers or closes one, or asks on the page for a review (only if this wait, not the hook, is the
+/// one to mark it seen). So it never outlives its session by much, it also ends at once when the
+/// session has no item open, when its Claude Code process (`CLAUDE_PID`) is gone, and after the
+/// time limit, 24 hours unless given. It polls once a second, the board being a local file.
+fn wait_mine(timeout: Option<u64>) -> Result<(), String> {
+    use std::time::{Duration, Instant};
+    let err = |e: rusqlite::Error| e.to_string();
+    let me = Identity::from_env().map_err(|e| e.to_string())?;
+    let store = open()?;
+    let Some(writer) = store.find_writer(&me).map_err(err)? else {
+        println!("You have no items on the board: nothing to wait for.");
+        return Ok(());
+    };
+    let limit = Duration::from_secs(timeout.unwrap_or(24 * 60 * 60));
+    let claude = std::env::var("CLAUDE_PID")
+        .ok()
+        .and_then(|p| p.trim().parse::<u32>().ok());
+    let mut known = owner_marks(&store, writer)?;
+    let started = Instant::now();
+    let mut checked: Option<Instant> = None;
+    loop {
+        let now = owner_marks(&store, writer)?;
+        let news: Vec<ItemId> = now
+            .iter()
+            .filter(|(id, mark)| known.get(id).is_some_and(|k| k != *mark))
+            .map(|(id, _)| *id)
+            .collect();
+        if !news.is_empty() {
+            for id in news {
+                show_from(&store, &format!("B{id}"), false)?;
+            }
+            return Ok(());
+        }
+        for (id, mark) in now {
+            known.entry(id).or_insert(mark);
+        }
+        let open_items = store.open_items_of(writer).map_err(err)?;
+        if open_items.is_empty() {
+            println!("You have no items open on the board: nothing to wait for.");
+            return Ok(());
+        }
+        if let Some(request) = store.latest_review().map_err(err)?
+            && !store.has_seen_review(request.id, writer).map_err(err)?
+            && store
+                .mark_review_seen(request.id, writer, "wait")
+                .map_err(err)?
+        {
+            println!("{}", review_note(&open_items));
+            return Ok(());
+        }
+        if started.elapsed() >= limit {
+            println!(
+                "No news after {} s. Start the wait again while you have items open.",
+                limit.as_secs()
+            );
+            return Ok(());
+        }
+        if let Some(pid) = claude
+            && checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(30))
+        {
+            if !alive(pid) {
+                return Ok(());
+            }
+            checked = Some(Instant::now());
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// Whether a process still runs, by `kill -0` on Unix. Where that cannot be told, it counts as
+/// running, and the wait's time limit ends it.
+fn alive(pid: u32) -> bool {
+    if !cfg!(unix) {
+        return true;
+    }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true)
 }
 
 fn add(

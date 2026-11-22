@@ -25,6 +25,10 @@ boards on one machine never clash: 8810 on Linux, 8811 inside WSL, 8812 on Windo
   the Item column shows it: `B12`, or a label such as `#243`. It works within the status filter
   and the tree node you picked, so set the filter to "all" to search closed items too.
 - **The status filter** shows open, answered or closed items, or everything.
+- **Ask sessions to review** asks every session with items not closed to review them. A working
+  session is told at its next Bash command; a session keeping `focus-board wait --mine` running is
+  woken, even when idle. The line above the table shows who has seen it, and whom you still need
+  to type to: a session idle with nothing running cannot be woken.
 - **The timeline**, below the table, lists every write, newest first.
 
 The page refreshes by itself. If it says "not connected", the board's service is down; see
@@ -46,6 +50,7 @@ The `focus-board` skill tells a session when and how to use the board. In short:
 
 ```sh
 focus-board add "Question?" -o a="first option" -o b="second option" --recommend a
+focus-board wait --mine           # one per session, in the background, while items are open
 focus-board wait B12              # run in the background: ends when the owner answers or closes it
 focus-board list                  # this project's open items; --everywhere for all projects
 focus-board show B12              # the answer, the feedback, every version

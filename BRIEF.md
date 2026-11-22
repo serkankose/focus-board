@@ -74,6 +74,13 @@ This brief says what is needed and why. How to build it is this project's call.
   column. **Make it a command, not only an HTTP route.** The Claude Code harness on this machine
   blocks non-GET `curl`, so a session cannot rely on posting to a URL. The command may call the
   server, or open the database directly in its own transaction.
+- **A review button** (owner, 2026-11-22: "we need a single button on the board to signal all
+  agents with not closed items to review the responses", then "b" on B22): one press asks every
+  session with items not closed to review them. The hook tells a working session at its next Bash
+  command, once per press, naming only its items by id and status. A session that keeps one
+  background wait while it has items open is woken by the press, even when idle. A session idle
+  with nothing running cannot be woken; the page shows who has seen the press, so the owner knows
+  where to type.
 
 ## Tests that prove it
 

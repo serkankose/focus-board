@@ -37,6 +37,8 @@ impl Board {
             .env_remove("FOCUS_BOARD_TRANSCRIPT")
             // Every session's shell has this; it must never count as an identity.
             .env("CLAUDE_CODE_SESSION_ID", "shell-session-id")
+            // `wait --mine` ends when this process is gone; a test sets it only on purpose.
+            .env_remove("CLAUDE_PID")
             // The board reads Claude Code's session registry for names; tests use their own.
             .env("FOCUS_BOARD_SESSIONS", self.dir.path().join("sessions"));
         if let Some((session, agent, agent_type)) = who {
@@ -170,9 +172,18 @@ fn hook_denies_a_hand_set_identity() {
     }
 }
 
+/// Runs the hook with no board at all.
 fn hook(input: &str) -> Output {
+    let none = tempfile::tempdir().unwrap();
+    hook_on(input, &none.path().join("no-board.sqlite"))
+}
+
+/// Runs the hook against the board `db`, never the real one: the hook reads the board for the
+/// owner's review note (B22 "b").
+fn hook_on(input: &str, db: &std::path::Path) -> Output {
     let mut child = Command::new(BIN)
         .args(["hook", "pre-tool-use"])
+        .env("FOCUS_BOARD_DB", db)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -805,4 +816,149 @@ fn a_wait_survives_a_layout_upgrade_while_it_waits() {
     assert!(out.status.success(), "{}", stderr(&out));
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.contains("answer     a: go"), "{text}");
+}
+
+/// The hook passes the owner's review note on (B22 "b"): as context only for an ordinary command,
+/// beside the rewrite for a board command, once per press, to the exact session of the call.
+#[test]
+fn the_hook_passes_the_review_note_on_once() {
+    let board = Board::new();
+    board.ok(S, &["add", "First?"]);
+    let db = board.dir.path().join("board.sqlite");
+    let call = |command: &str, agent: &str| -> Option<Value> {
+        let input = serde_json::json!({ "tool_name": "Bash", "session_id": "sess-1",
+            "agent_id": agent, "tool_input": { "command": command } })
+        .to_string();
+        let out = hook_on(&input, &db);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let text = String::from_utf8(out.stdout).unwrap();
+        (!text.trim().is_empty()).then(|| serde_json::from_str(&text).unwrap())
+    };
+    assert_eq!(call("ls", ""), None, "no press, nothing");
+    let press = || {
+        focus_board::store::Store::open(&db)
+            .unwrap()
+            .ask_for_review()
+            .unwrap()
+    };
+    press();
+    assert_eq!(
+        call("ls", "ag-1"),
+        None,
+        "a subagent with no items of its own"
+    );
+    let out = call("ls", "").expect("the note");
+    let specific = &out["hookSpecificOutput"];
+    let note = specific["additionalContext"].as_str().unwrap();
+    assert!(
+        note.contains("B1 (open)") && !note.contains("First?"),
+        "{out}"
+    );
+    assert!(specific.get("updatedInput").is_none() && specific.get("permissionDecision").is_none());
+    assert_eq!(call("ls", ""), None, "once per press");
+    press();
+    let out = call("focus-board list", "").expect("rewrite and note");
+    let specific = &out["hookSpecificOutput"];
+    assert!(
+        specific["updatedInput"]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with("focus-board list")
+    );
+    assert!(
+        specific["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("B1 (open)")
+    );
+}
+
+/// `wait --mine` (B22 "b") ends at once with nothing open; on a press of the review button, with
+/// the note, marked seen by the wait; on the owner's answer to one of the session's items; at its
+/// time limit; and at once, silently, when its Claude Code process is gone.
+#[test]
+fn wait_mine_ends_on_each_of_its_reasons() {
+    let board = Board::new();
+    let db = board.dir.path().join("board.sqlite");
+    let text = |out: Output| {
+        assert!(out.status.success(), "{}", stderr(&out));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let spawn = || {
+        board
+            .command(S, "work")
+            .args(["wait", "--mine", "--timeout", "20"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let settle = |child: &mut std::process::Child| {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the wait ended too early"
+        );
+    };
+    assert!(text(board.run(S, &["wait", "--mine"])).contains("nothing to wait for"));
+
+    board.ok(S, &["add", "First?"]);
+    let mut child = spawn();
+    settle(&mut child);
+    focus_board::store::Store::open(&db)
+        .unwrap()
+        .ask_for_review()
+        .unwrap();
+    let said = text(child.wait_with_output().unwrap());
+    assert!(
+        said.contains("asks you to review") && said.contains("B1 (open)"),
+        "{said}"
+    );
+    let how: String = rusqlite::Connection::open(&db)
+        .unwrap()
+        .query_row("SELECT how FROM review_seen", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(how, "wait");
+
+    let mut child = spawn();
+    settle(&mut child);
+    focus_board::store::Store::open(&db)
+        .unwrap()
+        .owner_answer(1, &serde_json::json!({ "text": "go" }), None)
+        .unwrap();
+    let said = text(child.wait_with_output().unwrap());
+    assert!(said.contains("answer") && said.contains("go"), "{said}");
+
+    // The limit. A session process that ends after 3 s bounds the wait if the limit broke. It is
+    // reaped as soon as it ends: `kill -0` counts an unreaped child, a zombie, as running, and a
+    // break-it run hung 10 hours on that (2026-11-22).
+    let started = std::time::Instant::now();
+    let mut session = Command::new("sleep").arg("3").spawn().unwrap();
+    let pid = session.id().to_string();
+    let reaper = std::thread::spawn(move || session.wait().unwrap());
+    let said = text(
+        board
+            .command(S, "work")
+            .env("CLAUDE_PID", &pid)
+            .args(["wait", "--mine", "--timeout", "1"])
+            .output()
+            .unwrap(),
+    );
+    assert!(said.contains("No news after 1 s"), "{said}");
+    assert!(started.elapsed().as_secs() < 3, "{:?}", started.elapsed());
+    reaper.join().unwrap();
+
+    let said = text(
+        board
+            .command(S, "work")
+            .env("CLAUDE_PID", &pid)
+            .args(["wait", "--mine", "--timeout", "20"])
+            .output()
+            .unwrap(),
+    );
+    assert!(said.is_empty(), "its session gone, nobody to tell: {said}");
+
+    board.ok(S, &["status", "B1", "closed"]);
+    let said = text(board.run(S, &["wait", "--mine", "--timeout", "20"]));
+    assert!(said.contains("nothing to wait for"), "{said}");
 }

@@ -197,6 +197,16 @@ try:
     except RuntimeError as e:
         check("searching narrows the table", False, str(e))
 
+    # The review button (B22 "b"): a press shows when it was asked, and who has not seen it yet.
+    try:
+        m.js("document.getElementById('review').click()")
+        m.wait("const p = document.getElementById('reviewed'); "
+               "return !p.hidden && p.innerText.includes('Review asked')", "the review line", timeout=5)
+        line = m.js("return document.getElementById('reviewed').innerText")
+        check("the review button asks the sessions", "Not yet:" in line, line[:90])
+    except RuntimeError as e:
+        check("the review button asks the sessions", False, str(e))
+
     labels = m.js("return [...document.querySelectorAll('nav button.node')].map(b => b.innerText.split(' ·')[0])")
     check("a project with one workspace has no workspace level; one with two has it",
           labels.count("beta") == 1 and labels.count("alpha") == 2 and "alpha-feature" in labels,
