@@ -153,3 +153,40 @@ fn the_registry_names_running_sessions() {
         "s3's derived name is not used"
     );
 }
+
+/// Copilot sessions (owner, 2026-11-22, #353) take their name from Copilot's own
+/// `<session-state>/<id>/workspace.yaml`. A session id never leads out of that folder.
+#[test]
+fn copilot_sessions_have_their_names() {
+    let root = tempfile::tempdir().unwrap();
+    let file = |at: &str, body: &str| {
+        let dir = root.path().join(at);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("workspace.yaml"), body).unwrap();
+    };
+    file(
+        "session-state/c1",
+        "id: c1\nname: 'It''s the probe'\nuser_named: true\n",
+    );
+    file(
+        "session-state/c2",
+        "id: c2\nname: \"Fix the build\"\nuser_named: false\n",
+    );
+    file("decoy", "id: decoy\nname: Decoy\nuser_named: true\n");
+    let projects = tempfile::tempdir().unwrap();
+    let mut watcher = NameWatcher::new(projects.path().to_path_buf(), None)
+        .with_copilot(Some(root.path().join("session-state")));
+    let on_board: Vec<(String, String)> = ["c1", "c2", "c3", "../decoy"]
+        .iter()
+        .map(|s| (s.to_string(), "made-up".to_string()))
+        .collect();
+    let mut changed = watcher.changed(&on_board);
+    changed.sort();
+    assert_eq!(
+        changed,
+        vec![
+            ("c1".into(), "It's the probe".into()),
+            ("c2".into(), "Fix the build".into()),
+        ]
+    );
+}

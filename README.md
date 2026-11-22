@@ -39,7 +39,7 @@ The page refreshes by itself. If it says "not connected", the board's service is
 Sessions show a name, never an id: the first of these that exists.
 1. The name you gave with `/rename`.
 2. A title in the session's own record.
-3. Claude Code's own label for it.
+3. Claude Code's or Copilot's own label for it.
 4. A stable made-up name, such as `plain-crane`.
 
 A rename shows on the page within a few seconds.

@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::identity::{Names, clean_name, scan_names};
+use crate::identity::{Names, clean_name, is_plain_id, scan_names};
 
 /// Where Claude Code keeps transcripts: `FOCUS_BOARD_PROJECTS`, else `~/.claude/projects`.
 pub fn projects_dir() -> Option<PathBuf> {
@@ -28,6 +28,54 @@ pub fn registry_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(dir));
     }
     crate::home_dir().map(|h| h.join(".claude").join("sessions"))
+}
+
+/// Where GitHub Copilot keeps its sessions: `FOCUS_BOARD_COPILOT`, else `~/.copilot/session-state`.
+pub fn copilot_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("FOCUS_BOARD_COPILOT").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    crate::home_dir().map(|h| h.join(".copilot").join("session-state"))
+}
+
+/// A Copilot session's name (owner, 2026-11-22, #353), from `<dir>/<session id>/workspace.yaml`:
+/// `user` when the owner gave it with `/rename` (`user_named: true`), else `auto`. Only a plain
+/// session id is looked up, so an id can never lead out of the folder.
+pub fn copilot_name(dir: &Path, session_id: &str) -> Option<Registered> {
+    if !is_plain_id(session_id) || session_id.is_empty() {
+        return None;
+    }
+    let text = std::fs::read_to_string(dir.join(session_id).join("workspace.yaml")).ok()?;
+    let field = |key: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix(':'))
+            .map(|v| yaml_text(v.trim()))
+    };
+    let name = clean_name(&field("name")?);
+    if name.is_empty() {
+        return None;
+    }
+    let source = if field("user_named").as_deref() == Some("true") {
+        "user"
+    } else {
+        "auto"
+    };
+    Some(Registered {
+        name,
+        source: source.into(),
+        since: 0,
+    })
+}
+
+/// A one-line YAML scalar as text: 'single' (with '' for '), "double" (JSON escapes), or plain.
+fn yaml_text(v: &str) -> String {
+    if let Some(inner) = v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+        return inner.replace("''", "'");
+    }
+    if v.starts_with('"') && v.ends_with('"') && v.len() > 1 {
+        return serde_json::from_str(v).unwrap_or_else(|_| v[1..v.len() - 1].to_string());
+    }
+    v.to_string()
 }
 
 /// A running session's name in the registry, and how it came: `user` (the owner's `/rename`),
@@ -107,6 +155,7 @@ struct Watched {
 pub struct NameWatcher {
     projects: PathBuf,
     registry: Option<PathBuf>,
+    copilot: Option<PathBuf>,
     sessions: HashMap<String, Watched>,
 }
 
@@ -116,13 +165,20 @@ impl NameWatcher {
         NameWatcher {
             projects,
             registry,
+            copilot: None,
             sessions: HashMap::new(),
         }
     }
 
+    /// Also names Copilot sessions from Copilot's own folder (see [`copilot_name`]).
+    pub fn with_copilot(mut self, dir: Option<PathBuf>) -> NameWatcher {
+        self.copilot = dir;
+        self
+    }
+
     /// The watcher for this machine's Claude Code folders.
     pub fn from_env() -> Option<NameWatcher> {
-        Some(NameWatcher::new(projects_dir()?, registry_dir()))
+        Some(NameWatcher::new(projects_dir()?, registry_dir()).with_copilot(copilot_dir()))
     }
 
     /// The sessions whose name in their transcript differs from the board's, as
@@ -156,8 +212,14 @@ impl NameWatcher {
                     watched.offset += read;
                 }
             }
-            if let Some(name) = best_name(registered.get(session_id), &watched.names)
-                && &name != on_board
+            let copilot = self
+                .copilot
+                .as_deref()
+                .and_then(|dir| copilot_name(dir, session_id));
+            if let Some(name) = best_name(
+                registered.get(session_id).or(copilot.as_ref()),
+                &watched.names,
+            ) && &name != on_board
             {
                 out.push((session_id.clone(), name));
             }

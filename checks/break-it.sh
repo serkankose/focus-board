@@ -123,7 +123,7 @@ check "own rewrite denied when re-sent" hook.rs command the_hooks_own_rewrite_pa
 check "a title beats the owner's rename" names.rs names the_registry_names_running_sessions 's/from\("user"\)\n(\s*)\.or_else\(\|\| names\.title\.clone\(\)\)/names.title.clone()\n$1.or_else(|| from("user"))/'
 check "derived names are used"       names.rs names the_registry_names_running_sessions 's/\.or_else\(\|\| names\.label\.clone\(\)\)\n\}/.or_else(|| names.label.clone())\n        .or_else(|| from("derived"))\n}/'
 check "the older registry name wins" names.rs names the_registry_names_running_sessions 's/Some\(known\) if known\.since >= since => \{\}/Some(known) if known.since <= since => {}/'
-check "a write ignores the registry" main.rs command a_write_takes_the_registry_name 's/best_name\(registered\.get\(&who\.session_id\), &names\)/best_name(None, \&names)/'
+check "a write ignores the registry" main.rs command a_write_takes_the_registry_name 's/best_name\(registered\.get\(&who\.session_id\)\.or\(copilot\.as_ref\(\)\), &names\)/best_name(copilot.as_ref(), \&names)/'
 check "new cells are not indexed"    store.rs store full_text_search_finds_any_cell_text 's/cells_indexed AFTER INSERT ON cells BEGIN/cells_indexed AFTER DELETE ON cells BEGIN/'
 check "old cells are not indexed"    store.rs store an_older_board_is_brought_to_layout_2 's/FROM cells c;/FROM cells c WHERE 0;/'
 check "odd characters reach the index" store.rs store full_text_search_finds_any_cell_text 's/format!\("\\"\{\}\\"", word/format!("{}", word/'
@@ -150,6 +150,9 @@ check "wait --mine has no limit"     main.rs command wait_mine_ends_on_each_of_i
 check "wait --mine outlives its session" main.rs command wait_mine_ends_on_each_of_its_reasons 's/if !alive\(pid\) \{/if false {/'
 check "--note-after still notes"    main.rs command copilot_gets_the_review_note_after_the_command 's/if note_after \{/if false {/'
 check "post-tool-use gives no note" main.rs command copilot_gets_the_review_note_after_the_command 's/println!\("\{\}", hook::post_tool_note\(&note\)\);/let _ = note;/'
+check "copilot names are ignored"   names.rs names copilot_sessions_have_their_names 's/if !is_plain_id\(session_id\) \|\| session_id\.is_empty\(\) \{/if true {/'
+check "a session id leaves the folder" names.rs names copilot_sessions_have_their_names 's/if !is_plain_id\(session_id\) \|\| session_id\.is_empty\(\) \{/if session_id.is_empty() {/'
+check "a copilot write ignores its name" main.rs command a_copilot_session_writes_under_its_copilot_name 's/let copilot = copilot_dir\(\)\.and_then\(\|dir\| copilot_name\(&dir, &who\.session_id\)\);/let copilot: Option<focus_board::names::Registered> = None;/'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 

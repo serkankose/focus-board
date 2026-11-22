@@ -40,7 +40,9 @@ impl Board {
             // `wait --mine` ends when this process is gone; a test sets it only on purpose.
             .env_remove("CLAUDE_PID")
             // The board reads Claude Code's session registry for names; tests use their own.
-            .env("FOCUS_BOARD_SESSIONS", self.dir.path().join("sessions"));
+            .env("FOCUS_BOARD_SESSIONS", self.dir.path().join("sessions"))
+            // And Copilot's session folder, never the real one.
+            .env("FOCUS_BOARD_COPILOT", self.dir.path().join("copilot"));
         if let Some((session, agent, agent_type)) = who {
             c.env("FOCUS_BOARD_SESSION", session)
                 .env("FOCUS_BOARD_AGENT", agent)
@@ -1020,4 +1022,20 @@ fn copilot_gets_the_review_note_after_the_command() {
         "{after}"
     );
     assert_eq!(run(&["hook", "post-tool-use"], "ls"), "", "once per press");
+}
+
+/// A Copilot session's write takes the name Copilot keeps for it (owner, 2026-11-22, #353).
+#[test]
+fn a_copilot_session_writes_under_its_copilot_name() {
+    let board = Board::new();
+    let dir = board.dir.path().join("copilot").join("sess-1");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("workspace.yaml"),
+        "id: sess-1\nname: 'Copilot probe'\nuser_named: true\n",
+    )
+    .unwrap();
+    board.ok(S, &["add", "First?"]);
+    let found = board.ok(None, &["search", "First"]);
+    assert!(found.contains("Copilot probe"), "{found}");
 }
