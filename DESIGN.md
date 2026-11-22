@@ -212,8 +212,15 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
 - **`wait --mine`**: one background wait per session while it has items open. It ends on news
   about the session's own items (the owner answers or closes one), on a press it is first to mark
   seen, at once when no item is open, when the session's Claude Code process (`CLAUDE_PID`,
-  checked by `kill -0` every 30 s) is gone, and after a time limit, 24 hours by default. So an idle
-  session wakes about once a day.
+  checked every 2 s) is gone, and after a time limit, 24 hours by default. So an idle session
+  wakes about once a day.
+- **Waits after the fact** (owner, 2026-11-22, B37 "a", from a Copilot session's diagnosis of B35):
+  a wait started late reports at once an owner's answer on an item still open that is newer than
+  the session's own last write on it, until the session writes there again. A close is not
+  reported at start: a closed item gets no more writes, so it would be news at every start. A
+  Copilot session sets no `CLAUDE_PID` and its process is called "MainThread", so without
+  `CLAUDE_PID` the wait watches the nearest ancestor whose program (the first word of its command
+  line) is `copilot` or `claude`. On Linux `/proc` tells it, and a zombie counts as gone.
 - **Copilot gets the note after the command** (owner, 2026-11-22, B34 "a"). Copilot runs the same
   hook from its own hook file, and its rewrite works, but it never shows a note given before a
   command; the press was marked seen all the same. Its hook file passes `--note-after`, so the
@@ -310,8 +317,9 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask)* One port per platform | `each_platform_has_its_own_port`, `where_page_prints_the_address` |
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
+| *(owner's ask, B37 "a")* Late waits see earlier answers; Copilot waits end with their session | `wait_mine_reports_an_answer_given_while_no_wait_ran`, `wait_mine_ends_when_its_copilot_process_ends` |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 102 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 105 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

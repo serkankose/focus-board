@@ -695,9 +695,17 @@ fn wait_mine(timeout: Option<u64>) -> Result<(), String> {
         return Ok(());
     };
     let limit = Duration::from_secs(timeout.unwrap_or(24 * 60 * 60));
-    let claude = std::env::var("CLAUDE_PID")
-        .ok()
-        .and_then(|p| p.trim().parse::<u32>().ok());
+    // Answers given while no wait ran (owner, 2026-11-22, B37): an owner's answer on an item still
+    // open, newer than this session's own last write on it, is news at once. A close is not: a
+    // closed item gets no more writes, so it would be news at every start.
+    let missed = missed_answers(&store, writer)?;
+    if !missed.is_empty() {
+        for id in missed {
+            show_from(&store, &format!("B{id}"), false)?;
+        }
+        return Ok(());
+    }
+    let session = session_process();
     let mut known = owner_marks(&store, writer)?;
     let started = Instant::now();
     let mut checked: Option<Instant> = None;
@@ -738,8 +746,8 @@ fn wait_mine(timeout: Option<u64>) -> Result<(), String> {
             );
             return Ok(());
         }
-        if let Some(pid) = claude
-            && checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(30))
+        if let Some(pid) = session
+            && checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(2))
         {
             if !alive(pid) {
                 return Ok(());
@@ -750,11 +758,107 @@ fn wait_mine(timeout: Option<u64>) -> Result<(), String> {
     }
 }
 
-/// Whether a process still runs, by `kill -0` on Unix. Where that cannot be told, it counts as
-/// running, and the wait's time limit ends it.
+/// The writer's items still open with an owner's answer newer than the writer's own last write on
+/// them: answers it has not acted on.
+fn missed_answers(store: &Store, writer: WriterId) -> Result<Vec<ItemId>, String> {
+    let mut missed = Vec::new();
+    let items = store.items(&Filter::default()).map_err(|e| e.to_string())?;
+    for item in items
+        .iter()
+        .filter(|i| i.author == writer && i.status != "closed")
+    {
+        let cells = store.current(item.id).map_err(|e| e.to_string())?;
+        let answer = cells
+            .iter()
+            .filter(|c| c.writer == OWNER && c.field == "answer")
+            .map(|c| c.seq)
+            .max();
+        let mine = cells
+            .iter()
+            .filter(|c| c.writer == writer)
+            .map(|c| c.seq)
+            .max()
+            .unwrap_or(0);
+        if answer.is_some_and(|a| a > mine) {
+            missed.push(item.id);
+        }
+    }
+    Ok(missed)
+}
+
+/// The process of the session this wait runs for (2026-11-22, B37): `CLAUDE_PID`, which Claude
+/// Code sets, else the nearest ancestor whose program is `copilot` or `claude`. A Copilot session
+/// sets no `CLAUDE_PID` and its process is called "MainThread", so the program's name comes from
+/// its command line.
+fn session_process() -> Option<u32> {
+    if let Some(pid) = std::env::var("CLAUDE_PID")
+        .ok()
+        .and_then(|p| p.trim().parse::<u32>().ok())
+    {
+        return Some(pid);
+    }
+    #[cfg(unix)]
+    {
+        let mut pid = std::os::unix::process::parent_id();
+        for _ in 0..32 {
+            if pid <= 1 {
+                break;
+            }
+            let Some((parent, program)) = process_info(pid) else {
+                break;
+            };
+            let name = program.rsplit(['/', '\\']).next().unwrap_or("");
+            if matches!(name, "copilot" | "copilot.exe" | "claude" | "claude.exe") {
+                return Some(pid);
+            }
+            pid = parent;
+        }
+    }
+    None
+}
+
+/// A process's parent and program (the first word of its command line): from `/proc` on Linux,
+/// else from `ps`.
+#[cfg(unix)]
+fn process_info(pid: u32) -> Option<(u32, String)> {
+    if cfg!(target_os = "linux") {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let parent = stat
+            .rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()?;
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        let program = String::from_utf8_lossy(cmdline.split(|b| *b == 0).next()?).into_owned();
+        return Some((parent, program));
+    }
+    let out = std::process::Command::new("ps")
+        .args(["-o", "ppid=,command=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (parent, command) = text.trim().split_once(char::is_whitespace)?;
+    Some((
+        parent.trim().parse().ok()?,
+        command.split_whitespace().next()?.to_string(),
+    ))
+}
+
+/// Whether a process still runs. On Linux from `/proc`, where a zombie (ended, not yet reaped)
+/// counts as gone; elsewhere on Unix by `kill -0`. Where that cannot be told, it counts as running,
+/// and the wait's time limit ends it.
 fn alive(pid: u32) -> bool {
     if !cfg!(unix) {
         return true;
+    }
+    if cfg!(target_os = "linux") {
+        return std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+            stat.rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().next())
+                .is_some_and(|state| state != "Z")
+        });
     }
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])

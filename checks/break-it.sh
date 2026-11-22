@@ -156,6 +156,9 @@ check "a copilot write ignores its name" main.rs command a_copilot_session_write
 check "copilot sessions get no mark" names.rs names a_sessions_tool_comes_from_its_files 's/if copilot\.is_some_and\(\|dir\| dir\.join\(session_id\)\.is_dir\(\)\) \{/if false {/'
 check "a tool id leaves the folder" names.rs names a_sessions_tool_comes_from_its_files 's/if session_id\.is_empty\(\) \|\| !is_plain_id\(session_id\) \{/if session_id.is_empty() {/'
 check "the tree drops the tool"     server.rs server the_tree_tells_each_sessions_tool 's/"tool": tools/"tool_": tools/'
+check "a late wait misses earlier answers" main.rs command wait_mine_reports_an_answer_given_while_no_wait_ran 's/if !missed\.is_empty\(\) \{/if false {/'
+check "an acted-on answer is news again" main.rs command wait_mine_reports_an_answer_given_while_no_wait_ran 's/if answer\.is_some_and\(\|a\| a > mine\) \{/if answer.is_some() {/'
+check "a copilot session goes unnoticed" main.rs command wait_mine_ends_when_its_copilot_process_ends 's/"copilot" \| "copilot\.exe" \| //'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 

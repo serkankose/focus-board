@@ -25,7 +25,12 @@ impl Board {
     }
 
     fn command(&self, who: Who, cwd: &str) -> Command {
-        let mut c = Command::new(BIN);
+        self.command_with(BIN, who, cwd)
+    }
+
+    /// Any program with the board's test environment, for one that runs the command itself.
+    fn command_with(&self, program: &str, who: Who, cwd: &str) -> Command {
+        let mut c = Command::new(program);
         c.current_dir(self.dir.path().join(cwd))
             .env("FOCUS_BOARD_DB", self.dir.path().join("board.sqlite"))
             .env("HOME", self.dir.path())
@@ -930,6 +935,8 @@ fn wait_mine_ends_on_each_of_its_reasons() {
         .unwrap();
     let said = text(child.wait_with_output().unwrap());
     assert!(said.contains("answer") && said.contains("go"), "{said}");
+    // The session acts on the answer, or the next wait reports it again at once.
+    board.ok(S, &["feedback", "B1", "on it"]);
 
     // The limit. A session process that ends after 3 s bounds the wait if the limit broke. It is
     // reaped as soon as it ends: `kill -0` counts an unreaped child, a zombie, as running, and a
@@ -1038,4 +1045,74 @@ fn a_copilot_session_writes_under_its_copilot_name() {
     board.ok(S, &["add", "First?"]);
     let found = board.ok(None, &["search", "First"]);
     assert!(found.contains("Copilot probe"), "{found}");
+}
+
+/// An answer given while no wait ran (owner, 2026-11-22, B37): a wait started later reports it at
+/// once, until the session writes on the item again.
+#[test]
+fn wait_mine_reports_an_answer_given_while_no_wait_ran() {
+    let board = Board::new();
+    board.ok(S, &["add", "First?"]);
+    focus_board::store::Store::open(&board.dir.path().join("board.sqlite"))
+        .unwrap()
+        .owner_answer(1, &serde_json::json!({ "text": "go" }), None)
+        .unwrap();
+    let started = std::time::Instant::now();
+    let said = board.ok(S, &["wait", "--mine", "--timeout", "20"]);
+    assert!(said.contains("answer") && said.contains("go"), "{said}");
+    assert!(started.elapsed().as_secs() < 5, "reported at once");
+    board.ok(S, &["feedback", "B1", "on it"]);
+    let said = board.ok(S, &["wait", "--mine", "--timeout", "1"]);
+    assert!(
+        said.contains("No news after 1 s"),
+        "acted on, so not news again: {said}"
+    );
+}
+
+/// A wait ends when its session's process ends (owner, 2026-11-22, B37). A Copilot session sets
+/// no CLAUDE_PID, so the wait finds the nearest ancestor whose program is copilot (here a shell
+/// started as "copilot"), and ends, silently, soon after it is gone.
+#[cfg(unix)]
+#[test]
+fn wait_mine_ends_when_its_copilot_process_ends() {
+    use std::os::unix::process::CommandExt;
+    let board = Board::new();
+    board.ok(S, &["add", "First?"]);
+    let out = board.dir.path().join("wait.out");
+    let pid = board.dir.path().join("wait.pid");
+    let script = format!(
+        "{BIN:?} wait --mine --timeout 30 > {out:?} 2>&1 & echo $! > {pid:?}; sleep 2; exit 0"
+    );
+    let mut copilot = board.command_with("bash", S, "work");
+    copilot.arg0("copilot").args(["-c", &script]);
+    let mut session = copilot.spawn().unwrap();
+    let reaper = std::thread::spawn(move || session.wait().unwrap());
+    let waited = std::time::Instant::now();
+    let wait_pid = loop {
+        if let Ok(p) = std::fs::read_to_string(&pid)
+            && !p.trim().is_empty()
+        {
+            break p.trim().to_string();
+        }
+        assert!(waited.elapsed().as_secs() < 10, "the wait never started");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    reaper.join().unwrap();
+    let gone = std::time::Instant::now();
+    while Command::new("kill")
+        .args(["-0", &wait_pid])
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+    {
+        assert!(
+            gone.elapsed().as_secs() < 10,
+            "the wait outlived its session: {:?}",
+            std::fs::read_to_string(format!("/proc/{wait_pid}/stat"))
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let said = std::fs::read_to_string(&out).unwrap();
+    assert!(said.is_empty(), "nobody to tell: {said}");
 }
