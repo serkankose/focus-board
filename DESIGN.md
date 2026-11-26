@@ -229,7 +229,8 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   registers `ctx.tool.hook("execute.before" | "execute.after")`, names its shell tool `shell`,
   and shows the model the result's `content` parts, so the note is added as one; 1.x's
   `server()` hooks (`bash`, a string output) are kept. Names come from the `title` in opencode's database
-  (`~/.local/share/opencode/opencode.db`, `FOCUS_BOARD_OPENCODE` overrides), read-only, except its
+  (`~/.local/share/opencode/opencode.db`, table `session_v2` since 2.x, else `session`;
+  `FOCUS_BOARD_OPENCODE` overrides), read-only, except its
   placeholder "New session - <date>"; the tool mark is ⬡. `checks/opencode-check.mjs` drives the
   plugin on a scratch board without opencode.
 - **Copilot gets the note after the command** (owner, 2026-11-22, B34 "a"). Copilot runs the same
@@ -331,7 +332,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask, B37 "a")* Late waits see earlier answers; Copilot waits end with their session | `wait_mine_reports_an_answer_given_while_no_wait_ran`, `wait_mine_ends_when_its_copilot_process_ends` |
 | *(owner's ask)* opencode: the plugin, names, mark | `checks/opencode-check.mjs` (8 checks, both APIs), `opencode_sessions_have_their_names_and_mark`, `an_opencode_session_writes_under_its_title` |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 109 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 110 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

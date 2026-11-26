@@ -227,21 +227,32 @@ fn opencode_sessions_have_their_names_and_mark() {
     raw.execute_batch(
         "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT NOT NULL);
          INSERT INTO session VALUES ('ses_a', 'Fix the parser');
-         INSERT INTO session VALUES ('ses_b', 'New session - 2026-11-26T10:00:00.000Z');",
+         INSERT INTO session VALUES ('ses_b', 'New session - 2026-11-26T10:00:00.000Z');
+         CREATE TABLE session_v2 (id TEXT PRIMARY KEY, title TEXT NOT NULL);
+         INSERT INTO session_v2 VALUES ('ses_d', 'Renamed in opencode 2');",
     )
     .unwrap();
     drop(raw);
     let projects = tempfile::tempdir().unwrap();
     let mut watcher =
         NameWatcher::new(projects.path().to_path_buf(), None).with_opencode(Some(db.clone()));
-    let on_board: Vec<(String, String)> = ["ses_a", "ses_b", "ses_c"]
+    let on_board: Vec<(String, String)> = ["ses_a", "ses_b", "ses_c", "ses_d"]
         .iter()
         .map(|s| (s.to_string(), "made-up".to_string()))
         .collect();
+    let mut changed = watcher.changed(&on_board);
+    changed.sort();
     assert_eq!(
-        watcher.changed(&on_board),
-        vec![("ses_a".to_string(), "Fix the parser".to_string())],
-        "a placeholder title names nothing"
+        changed,
+        vec![
+            ("ses_a".to_string(), "Fix the parser".to_string()),
+            ("ses_d".to_string(), "Renamed in opencode 2".to_string()),
+        ],
+        "a placeholder title names nothing; opencode 2.x keeps titles in session_v2"
+    );
+    assert_eq!(
+        focus_board::names::tool_of(projects.path(), None, Some(&db), "ses_d"),
+        Some("opencode")
     );
     let tool = |id: &str| focus_board::names::tool_of(projects.path(), None, Some(&db), id);
     assert_eq!(tool("ses_b"), Some("opencode"));

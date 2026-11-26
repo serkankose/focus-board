@@ -84,7 +84,9 @@ pub fn opencode_db() -> Option<PathBuf> {
     Some(data.join("opencode").join("opencode.db"))
 }
 
-/// An opencode session's title in opencode's own database, read-only, if the session is there.
+/// An opencode session's title in opencode's own database, read-only, if the session is there:
+/// table `session_v2` since opencode 2.x (owner, 2026-11-26: a rename did not reach the board),
+/// else 1.x's `session`.
 fn opencode_title(db: &Path, session_id: &str) -> Option<String> {
     use rusqlite::OpenFlags;
     if session_id.is_empty() || !is_plain_id(session_id) || !db.is_file() {
@@ -97,12 +99,14 @@ fn opencode_title(db: &Path, session_id: &str) -> Option<String> {
     .ok()?;
     conn.busy_timeout(std::time::Duration::from_millis(200))
         .ok()?;
-    conn.query_row(
-        "SELECT title FROM session WHERE id = ?1",
-        [session_id],
-        |r| r.get(0),
-    )
-    .ok()
+    ["session_v2", "session"].iter().find_map(|table| {
+        conn.query_row(
+            &format!("SELECT title FROM {table} WHERE id = ?1"),
+            [session_id],
+            |r| r.get(0),
+        )
+        .ok()
+    })
 }
 
 /// An opencode session's name: its title, unless it is opencode's placeholder ("New session -
