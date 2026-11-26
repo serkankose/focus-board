@@ -18,9 +18,8 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
-use crate::names::{NameWatcher, tool_of};
+use crate::names::{NameWatcher, Places, tool_of};
 use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer, label_in};
-use std::path::PathBuf;
 
 /// The header every write must carry. A cross-site form cannot send a custom header.
 pub const WRITE_HEADER: &str = "x-focus-board";
@@ -41,7 +40,7 @@ struct App {
     renames: Arc<AtomicU64>,
     /// Where each session's tool is told from (#361): Claude Code's transcripts, Copilot's
     /// session state. `None` without a name watcher.
-    tools: Arc<Option<(PathBuf, Option<PathBuf>)>>,
+    tools: Arc<Option<Places>>,
 }
 
 /// How often the server looks for renamed sessions.
@@ -331,8 +330,8 @@ async fn tree(State(app): State<App>) -> ApiResult {
                     "project": w.project,
                     "workspace": w.workspace,
                     "name": w.name,
-                    "tool": tools.as_ref().as_ref().and_then(|(projects, copilot)| {
-                        tool_of(projects, copilot.as_deref(), &w.session_id)
+                    "tool": tools.as_ref().as_ref().and_then(|(projects, copilot, opencode)| {
+                        tool_of(projects, copilot.as_deref(), opencode.as_deref(), &w.session_id)
                     }),
                     "last_seq": last_seq,
                     "last_at": last_at,

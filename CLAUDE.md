@@ -45,6 +45,7 @@ tests that prove it. Read it before designing anything. Don't copy it here.
   - `break-it.sh`: removes each rule in a scratch copy, and its test must then fail. Run it before
     committing a step, and add a line for every new rule.
   - `page-check.sh [BIN]`: the page in a headless Firefox, on a scratch board.
+  - `opencode-check.mjs [BIN]`: the opencode plugin on a scratch board, run with `node`.
   - `demo-board.sh BIN DIR`: a scratch board with demo items, for looking at the page:
     `FOCUS_BOARD_DB=DIR/board.sqlite BIN serve`.
 - Test boards set writers through `FOCUS_BOARD_*` in scripts and tests only. A session's own

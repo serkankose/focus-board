@@ -168,7 +168,7 @@ function shown(v) {
 }
 const writer = (id) => state.writers.get(id);
 // Which tool a session runs in (owner, 2026-11-22, #361): a mark of our own, not the products' logos.
-const TOOLS = { claude: ["✻", "Claude Code"], copilot: ["◈", "GitHub Copilot"] };
+const TOOLS = { claude: ["✻", "Claude Code"], copilot: ["◈", "GitHub Copilot"], opencode: ["⬡", "opencode"] };
 const marked = (w) => (TOOLS[w.tool] ? TOOLS[w.tool][0] + " " : "") + w.label;
 const label = (id) => (writer(id) ? marked(writer(id)) : "writer " + id);
 const place = (w) => (w && w.kind === "session" ? folder(w.project) + (w.workspace !== w.project ? " / " + folder(w.workspace) : "") : "");

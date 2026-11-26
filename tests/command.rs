@@ -47,7 +47,8 @@ impl Board {
             // The board reads Claude Code's session registry for names; tests use their own.
             .env("FOCUS_BOARD_SESSIONS", self.dir.path().join("sessions"))
             // And Copilot's session folder, never the real one.
-            .env("FOCUS_BOARD_COPILOT", self.dir.path().join("copilot"));
+            .env("FOCUS_BOARD_COPILOT", self.dir.path().join("copilot"))
+            .env("FOCUS_BOARD_OPENCODE", self.dir.path().join("opencode.db"));
         if let Some((session, agent, agent_type)) = who {
             c.env("FOCUS_BOARD_SESSION", session)
                 .env("FOCUS_BOARD_AGENT", agent)
@@ -1115,4 +1116,20 @@ fn wait_mine_ends_when_its_copilot_process_ends() {
     }
     let said = std::fs::read_to_string(&out).unwrap();
     assert!(said.is_empty(), "nobody to tell: {said}");
+}
+
+/// An opencode session's write takes its title in opencode's database (owner, 2026-11-26).
+#[test]
+fn an_opencode_session_writes_under_its_title() {
+    let board = Board::new();
+    let raw = rusqlite::Connection::open(board.dir.path().join("opencode.db")).unwrap();
+    raw.execute_batch(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT NOT NULL);
+         INSERT INTO session VALUES ('sess-1', 'opencode probe');",
+    )
+    .unwrap();
+    drop(raw);
+    board.ok(S, &["add", "First?"]);
+    let found = board.ok(None, &["search", "First"]);
+    assert!(found.contains("opencode probe"), "{found}");
 }

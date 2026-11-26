@@ -201,7 +201,7 @@ fn a_sessions_tool_comes_from_its_files() {
     std::fs::create_dir_all(state.join("copilot-1")).unwrap();
     std::fs::create_dir_all(root.path().join("decoy")).unwrap();
     append(&transcript(projects.path(), "claude-1"), &title("x"));
-    let tool = |id: &str| focus_board::names::tool_of(projects.path(), Some(&state), id);
+    let tool = |id: &str| focus_board::names::tool_of(projects.path(), Some(&state), None, id);
     assert_eq!(tool("claude-1"), Some("claude"));
     assert_eq!(tool("copilot-1"), Some("copilot"));
     assert_eq!(tool("gone"), None);
@@ -211,8 +211,39 @@ fn a_sessions_tool_comes_from_its_files() {
         "an id never leads out of the folder"
     );
     assert_eq!(
-        focus_board::names::tool_of(projects.path(), None, "copilot-1"),
+        focus_board::names::tool_of(projects.path(), None, None, "copilot-1"),
         None,
         "no Copilot folder known"
     );
+}
+
+/// opencode sessions (owner, 2026-11-26) take their name from the title in opencode's own
+/// database, except its placeholder "New session - <date>", and are marked as opencode's.
+#[test]
+fn opencode_sessions_have_their_names_and_mark() {
+    let root = tempfile::tempdir().unwrap();
+    let db = root.path().join("opencode.db");
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.execute_batch(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT NOT NULL);
+         INSERT INTO session VALUES ('ses_a', 'Fix the parser');
+         INSERT INTO session VALUES ('ses_b', 'New session - 2026-11-26T10:00:00.000Z');",
+    )
+    .unwrap();
+    drop(raw);
+    let projects = tempfile::tempdir().unwrap();
+    let mut watcher =
+        NameWatcher::new(projects.path().to_path_buf(), None).with_opencode(Some(db.clone()));
+    let on_board: Vec<(String, String)> = ["ses_a", "ses_b", "ses_c"]
+        .iter()
+        .map(|s| (s.to_string(), "made-up".to_string()))
+        .collect();
+    assert_eq!(
+        watcher.changed(&on_board),
+        vec![("ses_a".to_string(), "Fix the parser".to_string())],
+        "a placeholder title names nothing"
+    );
+    let tool = |id: &str| focus_board::names::tool_of(projects.path(), None, Some(&db), id);
+    assert_eq!(tool("ses_b"), Some("opencode"));
+    assert_eq!(tool("ses_c"), None);
 }

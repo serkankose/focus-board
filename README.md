@@ -41,11 +41,11 @@ The page refreshes by itself. If it says "not connected", the board's service is
 Sessions show a name, never an id: the first of these that exists.
 1. The name you gave with `/rename`.
 2. A title in the session's own record.
-3. Claude Code's or Copilot's own label for it.
+3. Claude Code's, Copilot's or opencode's own label or title for it.
 4. A stable made-up name, such as `plain-crane`.
 
 A rename shows on the page within a few seconds. A mark before the name tells the tool: ✻ Claude
-Code, ◈ GitHub Copilot.
+Code, ◈ GitHub Copilot, ⬡ opencode.
 
 ## For Claude Code sessions
 
@@ -117,6 +117,10 @@ note comes after the command's output instead:
   "PostToolUse": [{ "type": "command", "matcher": "Bash", "timeoutSec": 5,
     "bash": "\"$HOME/.cargo/bin/focus-board\" hook post-tool-use 2>/dev/null || true" }] } }
 ```
+
+**opencode** runs a plugin instead of hooks. Copy `install/opencode/focus-board.js` to
+`~/.config/opencode/plugins/`; it calls the same `focus-board hook` commands before and after
+each bash call, and the review note comes after the output, as for Copilot.
 
 The code also builds for Windows and macOS, but there is no installer for them yet.
 

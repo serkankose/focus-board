@@ -11,7 +11,10 @@ use serde_json::{Value, json};
 use focus_board::identity::{
     Identity, Names, Place, fork_parent, is_drive_path, plain_path, transcript_names,
 };
-use focus_board::names::{best_name, copilot_dir, copilot_name, registered_names, registry_dir};
+use focus_board::names::{
+    best_name, copilot_dir, copilot_name, opencode_db, opencode_name, registered_names,
+    registry_dir,
+};
 use focus_board::store::{
     Cell, Field, Filter, ItemId, ItemSummary, NewItem, OWNER, Store, Writer, WriterId, label_in,
     review_note, review_note_for,
@@ -330,7 +333,9 @@ fn writer() -> Result<(Identity, Place, Store), String> {
         let registered = registry_dir()
             .map(|dir| registered_names(&dir))
             .unwrap_or_default();
-        let copilot = copilot_dir().and_then(|dir| copilot_name(&dir, &who.session_id));
+        let copilot = copilot_dir()
+            .and_then(|dir| copilot_name(&dir, &who.session_id))
+            .or_else(|| opencode_db().and_then(|db| opencode_name(&db, &who.session_id)));
         if let Some(name) = best_name(registered.get(&who.session_id).or(copilot.as_ref()), &names)
         {
             who.name = name;

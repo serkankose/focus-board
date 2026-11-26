@@ -221,6 +221,17 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   Copilot session sets no `CLAUDE_PID` and its process is called "MainThread", so without
   `CLAUDE_PID` the wait watches the nearest ancestor whose program (the first word of its command
   line) is `copilot` or `claude`. On Linux `/proc` tells it, and a zombie counts as gone.
+- **opencode** (owner, 2026-11-26: "add support for opencode") has plugins, not hook files.
+  `install/opencode/focus-board.js`, copied to `~/.config/opencode/plugins/`, runs `focus-board hook
+  pre-tool-use --note-after` before a shell call (applying the rewrite, or throwing on a refusal)
+  and `hook post-tool-use` after it, so the rules stay in one place. opencode 2.x (seen live with
+  2.4.1, which runs as a service and updates itself) loads the default export's `setup(ctx)`,
+  registers `ctx.tool.hook("execute.before" | "execute.after")`, names its shell tool `shell`,
+  and shows the model the result's `content` parts, so the note is added as one; 1.x's
+  `server()` hooks (`bash`, a string output) are kept. Names come from the `title` in opencode's database
+  (`~/.local/share/opencode/opencode.db`, `FOCUS_BOARD_OPENCODE` overrides), read-only, except its
+  placeholder "New session - <date>"; the tool mark is ⬡. `checks/opencode-check.mjs` drives the
+  plugin on a scratch board without opencode.
 - **Copilot gets the note after the command** (owner, 2026-11-22, B34 "a"). Copilot runs the same
   hook from its own hook file, and its rewrite works, but it never shows a note given before a
   command; the press was marked seen all the same. Its hook file passes `--note-after`, so the
@@ -318,8 +329,9 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
 | *(owner's ask, B37 "a")* Late waits see earlier answers; Copilot waits end with their session | `wait_mine_reports_an_answer_given_while_no_wait_ran`, `wait_mine_ends_when_its_copilot_process_ends` |
+| *(owner's ask)* opencode: the plugin, names, mark | `checks/opencode-check.mjs` (8 checks, both APIs), `opencode_sessions_have_their_names_and_mark`, `an_opencode_session_writes_under_its_title` |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 105 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 109 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

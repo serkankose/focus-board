@@ -67,15 +67,77 @@ pub fn copilot_name(dir: &Path, session_id: &str) -> Option<Registered> {
     })
 }
 
+/// Where a session's tool is told from: Claude Code's transcripts, Copilot's session state,
+/// opencode's database.
+pub type Places = (PathBuf, Option<PathBuf>, Option<PathBuf>);
+
+/// Where opencode keeps its sessions (owner, 2026-11-26): `FOCUS_BOARD_OPENCODE`, else
+/// `opencode/opencode.db` in `$XDG_DATA_HOME` or `~/.local/share`.
+pub fn opencode_db() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("FOCUS_BOARD_OPENCODE").filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
+    }
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| crate::home_dir().map(|h| h.join(".local").join("share")))?;
+    Some(data.join("opencode").join("opencode.db"))
+}
+
+/// An opencode session's title in opencode's own database, read-only, if the session is there.
+fn opencode_title(db: &Path, session_id: &str) -> Option<String> {
+    use rusqlite::OpenFlags;
+    if session_id.is_empty() || !is_plain_id(session_id) || !db.is_file() {
+        return None;
+    }
+    let conn = rusqlite::Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    conn.busy_timeout(std::time::Duration::from_millis(200))
+        .ok()?;
+    conn.query_row(
+        "SELECT title FROM session WHERE id = ?1",
+        [session_id],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// An opencode session's name: its title, unless it is opencode's placeholder ("New session -
+/// <date>"), which names nothing. Read as `auto`.
+pub fn opencode_name(db: &Path, session_id: &str) -> Option<Registered> {
+    let title = opencode_title(db, session_id)?;
+    if title.starts_with("New session - ") || title.starts_with("Child session - ") {
+        return None;
+    }
+    let name = clean_name(&title);
+    (!name.is_empty()).then(|| Registered {
+        name,
+        source: "auto".into(),
+        since: 0,
+    })
+}
+
 /// Which tool a session belongs to (owner, 2026-11-22, #361), from the files that know it: a
-/// Copilot session has a folder in Copilot's session state, a Claude Code session a transcript.
-/// `None` when neither is there any more, or the id is not plain.
-pub fn tool_of(projects: &Path, copilot: Option<&Path>, session_id: &str) -> Option<&'static str> {
+/// Copilot session has a folder in Copilot's session state, an opencode session a row in
+/// opencode's database, a Claude Code session a transcript. `None` when none is there any more,
+/// or the id is not plain.
+pub fn tool_of(
+    projects: &Path,
+    copilot: Option<&Path>,
+    opencode: Option<&Path>,
+    session_id: &str,
+) -> Option<&'static str> {
     if session_id.is_empty() || !is_plain_id(session_id) {
         return None;
     }
     if copilot.is_some_and(|dir| dir.join(session_id).is_dir()) {
         return Some("copilot");
+    }
+    if opencode.is_some_and(|db| opencode_title(db, session_id).is_some()) {
+        return Some("opencode");
     }
     find_transcript(projects, session_id).map(|_| "claude")
 }
@@ -169,6 +231,7 @@ pub struct NameWatcher {
     projects: PathBuf,
     registry: Option<PathBuf>,
     copilot: Option<PathBuf>,
+    opencode: Option<PathBuf>,
     sessions: HashMap<String, Watched>,
 }
 
@@ -179,13 +242,24 @@ impl NameWatcher {
             projects,
             registry,
             copilot: None,
+            opencode: None,
             sessions: HashMap::new(),
         }
     }
 
     /// The folders it reads: Claude Code's transcripts, and Copilot's session state.
-    pub fn dirs(&self) -> (PathBuf, Option<PathBuf>) {
-        (self.projects.clone(), self.copilot.clone())
+    pub fn dirs(&self) -> Places {
+        (
+            self.projects.clone(),
+            self.copilot.clone(),
+            self.opencode.clone(),
+        )
+    }
+
+    /// Also names opencode sessions from opencode's database (see [`opencode_name`]).
+    pub fn with_opencode(mut self, db: Option<PathBuf>) -> NameWatcher {
+        self.opencode = db;
+        self
     }
 
     /// Also names Copilot sessions from Copilot's own folder (see [`copilot_name`]).
@@ -196,7 +270,11 @@ impl NameWatcher {
 
     /// The watcher for this machine's Claude Code folders.
     pub fn from_env() -> Option<NameWatcher> {
-        Some(NameWatcher::new(projects_dir()?, registry_dir()).with_copilot(copilot_dir()))
+        Some(
+            NameWatcher::new(projects_dir()?, registry_dir())
+                .with_copilot(copilot_dir())
+                .with_opencode(opencode_db()),
+        )
     }
 
     /// The sessions whose name in their transcript differs from the board's, as
@@ -233,7 +311,12 @@ impl NameWatcher {
             let copilot = self
                 .copilot
                 .as_deref()
-                .and_then(|dir| copilot_name(dir, session_id));
+                .and_then(|dir| copilot_name(dir, session_id))
+                .or_else(|| {
+                    self.opencode
+                        .as_deref()
+                        .and_then(|db| opencode_name(db, session_id))
+                });
             if let Some(name) = best_name(
                 registered.get(session_id).or(copilot.as_ref()),
                 &watched.names,
