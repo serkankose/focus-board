@@ -7,6 +7,7 @@
 pub mod hook;
 pub mod identity;
 pub mod names;
+pub mod notify;
 pub mod server;
 pub mod skill;
 pub mod store;

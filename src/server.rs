@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use crate::names::{NameWatcher, Places, tool_of};
+use crate::notify::{Notifier, shorten};
 use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer, label_in};
 
 /// The header every write must carry. A cross-site form cannot send a custom header.
@@ -53,6 +54,7 @@ pub async fn serve(
     listener: TcpListener,
     store: Store,
     watcher: Option<NameWatcher>,
+    notifier: Option<Notifier>,
 ) -> std::io::Result<()> {
     let port = listener.local_addr()?.port();
     let app = App {
@@ -64,7 +66,77 @@ pub async fn serve(
     if let Some(watcher) = watcher {
         tokio::spawn(watch_renames(app.clone(), watcher));
     }
+    if let Some(notifier) = notifier {
+        // What is already on the board is not news: taken before the server answers anyone.
+        let start = on_store(&app, |store| {
+            let items = store.items(&Filter::default())?;
+            let press = store.latest_review()?.map_or(0, |r| r.id);
+            Ok((items.iter().map(|i| i.id).max().unwrap_or(0), press))
+        })
+        .await;
+        if let Ok(start) = start {
+            tokio::spawn(watch_for_owner(app.clone(), notifier, start));
+        }
+    }
     axum::serve(listener, router(app)).await
+}
+
+/// How often the server looks for news to tell the owner.
+const NOTIFY_WATCH: Duration = Duration::from_secs(2);
+
+/// Tells the owner on the desktop (owner, 2026-11-26, B45 "a"): each item a session raises, and a
+/// review press still unseen by some sessions once `unseen_after` has passed, once per press.
+/// `start` is the newest item and press when the server started, which are not news.
+async fn watch_for_owner(app: App, notifier: Notifier, start: (ItemId, i64)) {
+    let page = crate::page_url();
+    let (mut told_item, mut told_press) = start;
+    let mut tick = tokio::time::interval(NOTIFY_WATCH);
+    loop {
+        tick.tick().await;
+        let (after_item, after_press) = (told_item, told_press);
+        let unseen_after = notifier.unseen_after.as_secs();
+        let news = on_store(&app, move |store| {
+            let writers = store.writers()?;
+            let items: Vec<(ItemId, String, String)> = store
+                .items(&Filter::default())?
+                .into_iter()
+                .filter(|i| i.id > after_item)
+                .map(|i| (i.id, label_in(&writers, i.author), i.question))
+                .collect();
+            let due = store.review_due(after_press, unseen_after)?;
+            let newest = store.latest_review()?.map(|r| r.id);
+            let unseen: Vec<String> = match &due {
+                Some(press) if newest == Some(press.id) => store
+                    .review_targets()?
+                    .into_iter()
+                    .filter(|t| t.seen.is_none())
+                    .map(|t| label_in(&writers, t.writer))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            Ok((items, due.map(|r| r.id), unseen))
+        })
+        .await;
+        let Ok((items, due, unseen)) = news else {
+            continue;
+        };
+        for (id, who, question) in items {
+            told_item = told_item.max(id);
+            notifier.send(
+                &format!("focus-board: B{id} from {who}"),
+                &format!("{}\n{page}", shorten(&question, 200)),
+            );
+        }
+        if let Some(press) = due {
+            told_press = press;
+            if !unseen.is_empty() {
+                notifier.send(
+                    "focus-board: review not seen yet",
+                    &format!("Not yet: {}. Type to them.\n{page}", unseen.join(", ")),
+                );
+            }
+        }
+    }
 }
 
 /// Every [`RENAME_WATCH`], gives each session the name in its transcript. The transcripts are

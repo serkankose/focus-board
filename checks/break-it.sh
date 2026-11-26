@@ -166,6 +166,9 @@ check "an opencode write ignores its title" main.rs command an_opencode_session_
 check "opencode 2 titles are not read" names.rs names opencode_sessions_have_their_names_and_mark 's/\["session_v2", "session"\]/["session"]/'
 check "a skill block reaches every tool" skill.rs command each_tool_gets_its_own_skill 's/keep = names\.split_whitespace\(\)\.any\(\|name\| name == tool\);/keep = true;/'
 check "a block's end drops the rest" skill.rs command each_tool_gets_its_own_skill 's/\} else if line == "<!-- end -->" \{\n(\s*)keep = true;/} else if line == "<!-- end -->" {\n$1keep = false;/'
+check "new items are not told"      server.rs server the_owner_is_told_of_new_items_and_unseen_presses 's/\.filter\(\|i\| i\.id > after_item\)/.filter(|i| i.id > after_item \&\& false)/'
+check "an unseen press is not told" server.rs server the_owner_is_told_of_new_items_and_unseen_presses 's/if !unseen\.is_empty\(\) \{/if false {/'
+check "old items are news"          server.rs server the_owner_is_told_of_new_items_and_unseen_presses 's/Ok\(\(items\.iter\(\)\.map\(\|i\| i\.id\)\.max\(\)\.unwrap_or\(0\), press\)\)/Ok((0, press))/'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 

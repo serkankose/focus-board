@@ -33,6 +33,10 @@ boards on one machine never clash: 8810 on Linux, 8811 inside WSL, 8812 on Windo
   to type to: a session idle with nothing running cannot be woken.
 - **The timeline**, below the table, lists every write, newest first.
 
+When a session raises an item, a desktop notification tells you, and so does a review press that
+some session has still not seen ten minutes later. `FOCUS_BOARD_NOTIFY=off` in the service's
+environment turns them off.
+
 The page refreshes by itself. If it says "not connected", the board's service is down; see
 "Trouble" below.
 

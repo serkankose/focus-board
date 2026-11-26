@@ -762,6 +762,28 @@ impl Store {
         Ok(out)
     }
 
+    /// The newest review press above `after` that is at least `secs` seconds old, if any.
+    pub fn review_due(
+        &self,
+        after: i64,
+        secs: u64,
+    ) -> Result<Option<ReviewRequest>, rusqlite::Error> {
+        self.conn
+            .query_row(
+                "SELECT id, asked_at FROM review_requests
+                 WHERE id > ?1 AND asked_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?2)
+                 ORDER BY id DESC LIMIT 1",
+                params![after, format!("-{secs} seconds")],
+                |r| {
+                    Ok(ReviewRequest {
+                        id: r.get(0)?,
+                        asked_at: r.get(1)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
     /// Moves whenever the owner asks for a review or a session sees one, for the page's feed.
     pub fn review_mark(&self) -> Result<i64, rusqlite::Error> {
         self.conn.query_row(

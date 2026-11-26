@@ -245,6 +245,16 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
 - **A wait prints through the board it opened** (2026-11-22): opening it again refused a layout
   upgraded meanwhile, and the B22 wait died on "update focus-board" instead of printing the answer.
 
+## Desktop notifications (owner, 2026-11-26, B45 "a")
+
+- The server tells the owner on the desktop when a session raises an item (`focus-board: B12 from
+  <session>`, the question and the page's address), and when a review press is still unseen by
+  some session ten minutes later (who has not seen it), once per press. What was on the board
+  when the server started is not news.
+- It runs `notify-send` on Linux, `osascript` on macOS, or the program `FOCUS_BOARD_NOTIFY` names
+  (`off` turns it off), as `PROGRAM TITLE BODY`; it never waits on it, and a missing program is
+  ignored. The systemd user service has the desktop's `DBUS_SESSION_BUS_ADDRESS`.
+
 ## The command
 
 | Command | Does |
@@ -334,10 +344,11 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
 | *(owner's ask, B37 "a")* Late waits see earlier answers; Copilot waits end with their session | `wait_mine_reports_an_answer_given_while_no_wait_ran`, `wait_mine_ends_when_its_copilot_process_ends` |
+| *(owner's ask, B45 "a")* Desktop notifications | `the_owner_is_told_of_new_items_and_unseen_presses` |
 | *(owner's ask, B44 "a")* One skill template, each tool its own parts | `each_tool_gets_its_own_skill` |
 | *(owner's ask)* opencode: the plugin, names, mark | `checks/opencode-check.mjs` (8 checks, both APIs), `opencode_sessions_have_their_names_and_mark`, `an_opencode_session_writes_under_its_title` |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 112 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 115 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

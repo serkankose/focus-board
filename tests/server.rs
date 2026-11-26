@@ -24,6 +24,14 @@ impl Board {
 
     /// The same, with the rename watch on a transcript folder.
     fn start_watching(projects: Option<PathBuf>) -> Board {
+        Board::start_with(projects, None)
+    }
+
+    /// The same, with the owner's notifications going to `notifier`.
+    fn start_with(
+        projects: Option<PathBuf>,
+        notifier: Option<focus_board::notify::Notifier>,
+    ) -> Board {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("board.sqlite");
         let item = NewItem {
@@ -52,6 +60,7 @@ impl Board {
                     listener,
                     store,
                     projects.map(|p| focus_board::names::NameWatcher::new(p, None)),
+                    notifier,
                 )
                 .await
                 .unwrap();
@@ -651,4 +660,49 @@ fn the_tree_tells_each_sessions_tool() {
     };
     assert_eq!(tool("s1"), Some(json!("claude")), "{tree}");
     assert_eq!(tool(""), Some(Value::Null), "the owner has none");
+}
+
+/// Desktop notifications for the owner (owner, 2026-11-26, B45 "a"): each item a session raises,
+/// and a review press still unseen by some session once the wait is over. What was on the board
+/// before the server started is not news.
+#[test]
+fn the_owner_is_told_of_new_items_and_unseen_presses() {
+    let dir = tempfile::tempdir().unwrap();
+    let told = dir.path().join("told.log");
+    let script = dir.path().join("notify");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> {told:?}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let notifier = focus_board::notify::Notifier {
+        program: script.to_str().unwrap().into(),
+        unseen_after: std::time::Duration::ZERO,
+    };
+    let board = Board::start_with(None, Some(notifier));
+    board.get("/api/items"); // the server is up, so its start is taken
+    let question = NewItem {
+        question: "A new one?".into(),
+        ..NewItem::default()
+    };
+    board
+        .store()
+        .add_item(&session("s2"), &here(), &question)
+        .unwrap();
+    let (status, _) = board.post("/api/review", json!({}));
+    assert_eq!(status, 200);
+    let started = std::time::Instant::now();
+    let read = || std::fs::read_to_string(&told).unwrap_or_default();
+    while !(read().contains("B2 from") && read().contains("review not seen yet")) {
+        assert!(started.elapsed().as_secs() < 15, "told so far: {}", read());
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let said = read();
+    assert!(said.contains("A new one?"), "{said}");
+    assert!(said.contains("Not yet:"), "{said}");
+    assert!(
+        !said.contains("B1 from"),
+        "an item from before the start is not news: {said}"
+    );
 }
