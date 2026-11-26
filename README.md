@@ -38,7 +38,8 @@ boards on one machine never clash: 8810 on Linux, 8811 inside WSL, 8812 on Windo
 
 When a session raises an item, a desktop notification tells you, and so does a review press that
 some session has still not seen ten minutes later. `FOCUS_BOARD_NOTIFY=off` in the service's
-environment turns them off.
+environment turns them off. Each one is also logged: `grep notified
+~/.local/state/focus-board/serve.log` lists them.
 
 The page refreshes by itself. If it says "not connected", the board's service is down; see
 "Trouble" below.

@@ -37,6 +37,12 @@ impl Notifier {
     /// Shows one notification. A missing program or a failure is ignored; the child is reaped on
     /// a thread of its own, so the board never waits.
     pub fn send(&self, title: &str, body: &str) {
+        // One line per notification in the server's log (owner, 2026-11-26, B49 "a"): the
+        // desktop may keep no history, and `grep notified serve.log` lists them.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        println!("{}", log_line(now, title, body));
         let name = self.program.rsplit(['/', '\\']).next().unwrap_or("");
         let args: Vec<String> = match name {
             // Stays until the owner closes it (owner, 2026-11-26: the first test vanished too quickly).
@@ -68,6 +74,35 @@ impl Notifier {
             });
         }
     }
+}
+
+/// The log line for one notification: the UTC time, the title, and the body's first line.
+pub fn log_line(at: u64, title: &str, body: &str) -> String {
+    format!(
+        "{} notified: {title} | {}",
+        utc(at),
+        body.lines().next().unwrap_or("")
+    )
+}
+
+/// Seconds since 1970 as a UTC time, `2026-11-26T14:09:35Z` (Howard Hinnant's civil-from-days).
+pub fn utc(secs: u64) -> String {
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
 }
 
 /// A string literal for AppleScript.

@@ -255,6 +255,9 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   2026-11-26, after a test on KDE Plasma vanished too quickly), `osascript` on macOS, or the program `FOCUS_BOARD_NOTIFY` names
   (`off` turns it off), as `PROGRAM TITLE BODY`; it never waits on it, and a missing program is
   ignored. The systemd user service has the desktop's `DBUS_SESSION_BUS_ADDRESS`.
+- Each notification is also one line in the server's output, so in `serve.log` (owner,
+  2026-11-26, B49 "a"; KDE Plasma keeps its history only in memory): `<UTC time> notified:
+  <title> | <first line>`. `grep notified ~/.local/state/focus-board/serve.log` lists them.
 
 ## Session liveness (owner, 2026-11-26, B45 "b")
 
@@ -375,11 +378,11 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(owner's ask, B45 "d")* The hook installer | `the_hook_installer_touches_only_its_hook`, `the_hook_installer_keeps_the_settings_private` |
 | *(owner's ask, B45 "c")* Ageing | the page checks "each waiting item says on whom" and "ordering by waiting keeps the rows" |
 | *(owner's ask, B45 "b")* Session liveness | `a_wait_announces_itself_while_it_runs`, `liveness_comes_from_live_processes_only`, `the_tree_tells_whether_each_session_lives` |
-| *(owner's ask, B45 "a")* Desktop notifications | `the_owner_is_told_of_new_items_and_unseen_presses` |
+| *(owner's ask, B45 "a")* Desktop notifications | `the_owner_is_told_of_new_items_and_unseen_presses`, `each_notification_is_logged` |
 | *(owner's ask, B44 "a")* One skill template, each tool its own parts | `each_tool_gets_its_own_skill` |
 | *(owner's ask)* opencode: the plugin, names, mark | `checks/opencode-check.mjs` (8 checks, both APIs), `opencode_sessions_have_their_names_and_mark`, `an_opencode_session_writes_under_its_title` |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 124 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 125 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

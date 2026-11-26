@@ -1311,3 +1311,62 @@ fn the_hook_installer_keeps_the_settings_private() {
         "not to be touched"
     );
 }
+
+/// Each desktop notification is logged by the server (owner, 2026-11-26, B49 "a"): one line,
+/// `<UTC time> notified: <title> | <first line of the body>`, so `grep notified serve.log` lists
+/// them. The UTC times are checked against Python's.
+#[test]
+fn each_notification_is_logged() {
+    use focus_board::notify::{log_line, utc};
+    assert_eq!(utc(0), "1970-01-01T00:00:00Z");
+    assert_eq!(utc(951_782_400), "2000-02-29T00:00:00Z");
+    assert_eq!(utc(1_795_369_183), "2026-11-22T17:39:43Z");
+    assert_eq!(utc(4_102_444_799), "2099-12-31T23:59:59Z");
+    assert_eq!(
+        log_line(0, "focus-board: B1 from s", "Keep it?\nhttp://x"),
+        "1970-01-01T00:00:00Z notified: focus-board: B1 from s | Keep it?"
+    );
+
+    let board = Board::new();
+    /// Kills the server however the test ends, so no server outlives it.
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut serve = Server(
+        board
+            .command(None, "work")
+            .env("FOCUS_BOARD_NOTIFY", "true")
+            .args(["serve", "--port", "0"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let lines = |pipe: Box<dyn std::io::Read + Send>| {
+        let (send, read) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(pipe).lines().map_while(Result::ok) {
+                let _ = send.send(line);
+            }
+        });
+        read
+    };
+    let ready = lines(Box::new(serve.0.stderr.take().unwrap()));
+    let logged = lines(Box::new(serve.0.stdout.take().unwrap()));
+    let wait = std::time::Duration::from_secs(10);
+    assert!(
+        ready.recv_timeout(wait).unwrap().contains("http://"),
+        "the server is up"
+    );
+    board.ok(S, &["add", "Logged?"]);
+    let said = logged.recv_timeout(wait).expect("a notified line");
+    assert!(
+        said.contains(" notified: focus-board: B1 from ") && said.ends_with("| Logged?"),
+        "{said}"
+    );
+}
