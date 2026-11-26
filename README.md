@@ -103,11 +103,12 @@ which starts when you log in. Two more pieces live in your own Claude Code setti
     "timeout": 5 }] }
   ```
 
-- **The skill** `focus-board`, in `~/.claude/skills/focus-board/SKILL.md`, which tells sessions
-  how to use the board.
+- **The skill** `focus-board`, which tells sessions how to use the board. The installer writes it
+  for each tool it finds (Claude Code, Copilot, opencode) from one template, `install/skill.md`;
+  `focus-board skill --tool claude|copilot|opencode` prints a tool's copy.
 
-**GitHub Copilot CLI** reads its own hook files, never Claude Code's. Put this in
-`~/.copilot/hooks/focus-board.json`. Copilot shows no note given before a command, so the review
+**GitHub Copilot CLI** reads its own hook files, never Claude Code's. The installer puts this in
+`~/.copilot/hooks/focus-board.json` when Copilot is installed. Copilot shows no note given before a command, so the review
 note comes after the command's output instead:
 
 ```json
@@ -118,8 +119,8 @@ note comes after the command's output instead:
     "bash": "\"$HOME/.cargo/bin/focus-board\" hook post-tool-use 2>/dev/null || true" }] } }
 ```
 
-**opencode** runs a plugin instead of hooks. Copy `install/opencode/focus-board.js` to
-`~/.config/opencode/plugins/`; it calls the same `focus-board hook` commands before and after
+**opencode** runs a plugin instead of hooks. The installer copies `install/opencode/focus-board.js`
+to `~/.config/opencode/plugins/` when opencode is installed; it calls the same `focus-board hook` commands before and after
 each bash call, and the review note comes after the output, as for Copilot.
 
 The code also builds for Windows and macOS, but there is no installer for them yet.

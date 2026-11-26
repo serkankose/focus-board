@@ -1133,3 +1133,43 @@ fn an_opencode_session_writes_under_its_title() {
     let found = board.ok(None, &["search", "First"]);
     assert!(found.contains("opencode probe"), "{found}");
 }
+
+/// One template for the skill (owner, 2026-11-26, B44 "a"): each tool's copy keeps its own parts
+/// and none of the others', with no marker left; the command prints the same.
+#[test]
+fn each_tool_gets_its_own_skill() {
+    use focus_board::skill::skill_for;
+    let (claude, copilot, opencode) = (
+        skill_for("claude").unwrap(),
+        skill_for("copilot").unwrap(),
+        skill_for("opencode").unwrap(),
+    );
+    for skill in [&claude, &copilot, &opencode] {
+        assert!(
+            skill.starts_with("---\nname: focus-board\n"),
+            "frontmatter first"
+        );
+        assert!(!skill.contains("<!--"), "no marker left");
+        assert!(skill.contains("focus-board wait --mine") && skill.contains("## Where things are"));
+    }
+    assert!(claude.contains("run_in_background") && claude.contains("In auto mode"));
+    assert!(!claude.contains("~/.copilot") && !claude.contains("~/.config/opencode"));
+    assert!(copilot.contains("detached background") && copilot.contains("~/.copilot/hooks"));
+    assert!(!copilot.contains("run_in_background") && !copilot.contains("In auto mode"));
+    assert!(
+        opencode.contains("description: In opencode")
+            && opencode.contains("plugins/focus-board.js")
+    );
+    assert!(!opencode.contains("~/.copilot/hooks") && !opencode.contains("run_in_background"));
+    assert_eq!(skill_for("vim"), None);
+    assert_eq!(board_free_skill("copilot"), copilot);
+}
+
+fn board_free_skill(tool: &str) -> String {
+    let out = Command::new(BIN)
+        .args(["skill", "--tool", tool])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    String::from_utf8(out.stdout).unwrap()
+}

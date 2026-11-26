@@ -56,6 +56,11 @@ tests that prove it. Read it before designing anything. Don't copy it here.
     our own locks), DuckDB and redb (one writing process at a time), replicated or CRDT SQLite
     forks (rqlite, LiteFS, libSQL, cr-sqlite). The board is on one machine, writes are tiny, and
     the CRDT forks merge clashing writes silently, which the brief's rule 1 forbids.
+- **The skill has one source**: `install/skill.md` (owner, 2026-11-26, B44 "a"), with
+  `<!-- only: TOOLS -->` blocks for what differs per tool. `focus-board skill --tool
+  claude|copilot|opencode` renders it, and `install/linux.sh` writes each installed tool's copy,
+  plus Copilot's hook file (`install/copilot/`) and opencode's plugin (`install/opencode/`).
+  Edit the template, never an installed copy: the next install overwrites it.
 - **The command is on `PATH`** as `focus-board`, installed with `cargo install` (owner,
   2026-11-21). No project needs a path to it.
 

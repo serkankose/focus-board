@@ -8,6 +8,7 @@ pub mod hook;
 pub mod identity;
 pub mod names;
 pub mod server;
+pub mod skill;
 pub mod store;
 
 use std::path::PathBuf;

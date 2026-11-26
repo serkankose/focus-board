@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "matcher": "Bash",
+        "bash": "\"$HOME/.cargo/bin/focus-board\" hook pre-tool-use --note-after 2>/dev/null || true",
+        "timeoutSec": 5
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "matcher": "Bash",
+        "bash": "\"$HOME/.cargo/bin/focus-board\" hook post-tool-use 2>/dev/null || true",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

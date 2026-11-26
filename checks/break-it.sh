@@ -164,6 +164,8 @@ check "opencode placeholders are names" names.rs names opencode_sessions_have_th
 check "opencode sessions get no mark" names.rs names opencode_sessions_have_their_names_and_mark 's/if opencode\.is_some_and\(\|db\| opencode_title\(db, session_id\)\.is_some\(\)\) \{/if false {/'
 check "an opencode write ignores its title" main.rs command an_opencode_session_writes_under_its_title 's/\.or_else\(\|\| opencode_db\(\)\.and_then\(\|db\| opencode_name\(&db, &who\.session_id\)\)\)//'
 check "opencode 2 titles are not read" names.rs names opencode_sessions_have_their_names_and_mark 's/\["session_v2", "session"\]/["session"]/'
+check "a skill block reaches every tool" skill.rs command each_tool_gets_its_own_skill 's/keep = names\.split_whitespace\(\)\.any\(\|name\| name == tool\);/keep = true;/'
+check "a block's end drops the rest" skill.rs command each_tool_gets_its_own_skill 's/\} else if line == "<!-- end -->" \{\n(\s*)keep = true;/} else if line == "<!-- end -->" {\n$1keep = false;/'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 

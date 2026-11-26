@@ -119,6 +119,11 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Print the focus-board skill as one tool reads it: claude, copilot or opencode.
+    Skill {
+        #[arg(long)]
+        tool: String,
+    },
     /// Print where the board is kept on this machine.
     Where {
         /// Print the page's address instead: 127.0.0.1 with this platform's port.
@@ -262,6 +267,16 @@ fn run(cmd: Cmd) -> Result<(), String> {
             timeout,
             ..
         } => wait(item.as_deref().unwrap_or_default(), after, timeout),
+        Cmd::Skill { tool } => match focus_board::skill::skill_for(&tool) {
+            Some(text) => {
+                print!("{text}");
+                Ok(())
+            }
+            None => Err(format!(
+                "no skill for {tool:?}; one of {}",
+                focus_board::skill::TOOLS.join(", ")
+            )),
+        },
         Cmd::Search { words, json } => search(&words.join(" "), json),
         Cmd::Where { page: true } => {
             println!("{}", page_url());
