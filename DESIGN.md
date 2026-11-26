@@ -266,6 +266,13 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   the name (green: a press or an answer wakes it; grey: running, no wait) by CSS, so the node's
   text is unchanged, and the review line marks a Claude Code session that no longer runs as gone.
 
+## Ageing (owner, 2026-11-26, B45 "c")
+
+- Each item not closed says on whom it waits, and for how long: an open item on the owner since it
+  was raised or last reopened, an answered one on its session since the owner's answer. Past a day
+  the age is highlighted. "Order: waiting longest" sorts by that (follow-ups stay under their
+  item); the default order is unchanged. All on the page, from the cells' times.
+
 ## The command
 
 | Command | Does |
@@ -337,7 +344,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | *(review R6)* A shared folder name does not mix projects | `a_shared_folder_name_does_not_mix_projects` |
 | *(review R8)* The timeline is cut and says so; active items on the server | `timeline_is_cut_and_says_so`, `timeline_cut_and_active_filter` |
 | *(review R10, R11, G8)* Repeated letters, a newer layout, the author-only question | `a_repeated_option_letter_is_refused`, `a_newer_layout_is_refused`, `only_the_author_writes_the_question` |
-| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 17 checks in headless Firefox |
+| The page in a real browser (R7, R9, W9, W10 included) | `checks/page-check.sh`: 19 checks in headless Firefox |
 | *(owner's ask)* Each item keeps where it was raised: repo, worktree, branch, path | `item_context_is_recorded_at_raise_time`, the branch asserts in `projects_and_worktrees_stay_apart`, and the page check "each item shows its repo, worktree, branch and full path" |
 | A board from before layout versions is refused | `an_unversioned_board_is_refused` |
 | *(review R3)* A copied session finds its parent and sits under it | `fork_parent_reads_the_transcript`, `a_copied_session_files_under_its_parent`, `a_copied_session_writes_under_its_parent` (the binary, through the hook), and the page check "a copied session sits under the session it was copied from" |
@@ -355,6 +362,7 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
 | *(owner's ask, B37 "a")* Late waits see earlier answers; Copilot waits end with their session | `wait_mine_reports_an_answer_given_while_no_wait_ran`, `wait_mine_ends_when_its_copilot_process_ends` |
+| *(owner's ask, B45 "c")* Ageing | the page checks "each waiting item says on whom" and "ordering by waiting keeps the rows" |
 | *(owner's ask, B45 "b")* Session liveness | `a_wait_announces_itself_while_it_runs`, `liveness_comes_from_live_processes_only`, `the_tree_tells_whether_each_session_lives` |
 | *(owner's ask, B45 "a")* Desktop notifications | `the_owner_is_told_of_new_items_and_unseen_presses` |
 | *(owner's ask, B44 "a")* One skill template, each tool its own parts | `each_tool_gets_its_own_skill` |

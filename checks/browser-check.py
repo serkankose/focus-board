@@ -213,6 +213,17 @@ try:
     rows = m.js(ROWS)
     check("the tree counts the items not closed", badge == str(len(rows)), f"count {badge}, rows {len(rows)}")
 
+    # Ageing (owner, 2026-11-26, B45 "c"): each item not closed says on whom it waits, and for how
+    # long; ordering by "waiting longest" keeps the same rows.
+    ages = m.js("return [...document.querySelectorAll('#items .age')].map(a => a.innerText)")
+    check("each waiting item says on whom", len(ages) == len(rows) and all(a.startswith("waiting on ") for a in ages),
+          "; ".join(ages[:2]))
+    ORDER = "const o = document.getElementById('order'); o.value = arguments[0]; o.dispatchEvent(new Event('change'))"
+    m.js(ORDER, "waiting")
+    reordered = m.js(ROWS)
+    check("ordering by waiting keeps the rows", sorted(reordered) == sorted(rows), ", ".join(reordered))
+    m.js(ORDER, "raised")
+
     labels = m.js("return [...document.querySelectorAll('nav button.node')].map(b => b.innerText.split(' ·')[0])")
     check("a project with one workspace has no workspace level; one with two has it",
           labels.count("beta") == 1 and labels.count("alpha") == 2 and "alpha-feature" in labels,

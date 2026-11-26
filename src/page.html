@@ -37,6 +37,8 @@ nav button.node.selected { background: var(--chip); border-color: var(--line); }
 nav button.node[data-count]::after { content: attr(data-count); float: right; min-width: 1.6em; margin-left: 6px; padding: 0 6px; border-radius: 999px;
   background: var(--chip); color: var(--muted); font-size: 0.75em; line-height: 1.7; text-align: center;
   font-variant-numeric: tabular-nums; }
+.age { margin-top: 4px; font-size: 0.85em; color: var(--muted); }
+.age.old { color: var(--open); font-weight: 600; }
 nav button.node .live::before { content: "●"; margin-left: 6px; font-size: 0.7em; vertical-align: 1px; }
 nav button.node .live.waiting::before { color: var(--answered); }
 nav button.node .live.running::before { color: var(--muted); }
@@ -83,6 +85,12 @@ dialog ol { padding-left: 18px; }
 <header>
   <h1>focus-board</h1>
   <label>Project <select id="project"><option value="">all projects</option></select></label>
+  <label>Order
+    <select id="order">
+      <option value="raised">raised first</option>
+      <option value="waiting">waiting longest</option>
+    </select>
+  </label>
   <label>Status
     <select id="status">
       <option value="active">not closed</option>
@@ -351,6 +359,11 @@ function renderItems() {
       walk(i.id, depth + 1);
     }
   };
+  // Waiting longest first, when asked (B45 "c"); follow-ups stay under their item.
+  if ($("order").value === "waiting") {
+    const since = (i) => (waiting(i) || {}).since || "9999";
+    for (const list of children.values()) list.sort((a, b) => since(a).localeCompare(since(b)));
+  }
   walk(null, 0);
   $("items").replaceChildren(...rows);
   $("empty").hidden = rows.length > 0;
@@ -394,12 +407,39 @@ function contextOf(item) {
     el("div", { class: "path", title: "the checkout it was raised in" }, item.workspace));
 }
 
+// On whom an item waits, since when (owner, 2026-11-26, B45 "c"): an open item on the owner since
+// it was raised or last reopened, an answered one on its session since the owner's answer.
+function waiting(item) {
+  if (item.status === "open") {
+    const opened = item.cells.filter((c) => c.field === "status" && c.value === "open").map((c) => c.written_at);
+    const since = opened.length ? opened.sort().pop() : item.cells.map((c) => c.written_at).sort()[0];
+    return { who: "you", since };
+  }
+  if (item.status === "answered") {
+    const answer = state.owner == null ? null : cell(item, state.owner, "answer");
+    return answer ? { who: "the session", since: answer.written_at } : null;
+  }
+  return null;
+}
+function age(iso) {
+  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60000));
+  if (minutes < 1) return "<1 min";
+  if (minutes < 60) return minutes + " min";
+  if (minutes < 48 * 60) return Math.floor(minutes / 60) + " h";
+  return Math.floor(minutes / 1440) + " d";
+}
 function statusCell(item) {
   const mine = state.owner == null ? null : cell(item, state.owner, "status");
   const next = item.status === "closed" ? "open" : "closed";
   const msg = el("div", { class: "msg" }, state.notes.get(item.id) || "");
   return el("div", {},
     el("span", { class: "chip st-" + item.status }, item.status),
+    (() => {
+      const w = waiting(item);
+      if (!w || !w.since) return null;
+      const old = Date.now() - Date.parse(w.since) > 24 * 3600 * 1000;
+      return el("div", { class: "age" + (old ? " old" : ""), title: "since " + w.since }, "waiting on " + w.who + " · " + age(w.since));
+    })(),
     el("div", { style: "margin-top:6px" },
       el("button", { onclick: async () => {
         const r = await postJSON("/api/status", { item: item.id, status: next, expect: mine ? mine.version : 0 });
@@ -505,6 +545,7 @@ async function showHistory(itemId, writerId, field) {
 
 $("project").addEventListener("change", (e) => select(e.target.value ? "project" : null, e.target.value));
 $("status").addEventListener("change", () => refresh());
+$("order").addEventListener("change", () => keepFocus(renderItems));
 // The review button (owner, 2026-11-22, B22 "b") asks every session with items not closed to
 // review them. The line above the table says who has seen it, so the owner knows where to type.
 $("review").addEventListener("click", async () => {

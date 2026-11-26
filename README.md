@@ -28,6 +28,8 @@ boards on one machine never clash: 8810 on Linux, 8811 inside WSL, 8812 on Windo
   the Item column shows it: `B12`, or a label such as `#243`. It works within the status filter
   and the tree node you picked, so set the filter to "all" to search closed items too.
 - **The status filter** shows open, answered or closed items, or everything.
+- **Ageing**: each item not closed says on whom it waits (you, or the session) and for how long;
+  past a day it is highlighted. **Order: waiting longest** puts the oldest first.
 - **Ask sessions to review** asks every session with items not closed to review them. A working
   session is told at its next Bash command; a session keeping `focus-board wait --mine` running is
   woken, even when idle. The line above the table shows who has seen it, and whom you still need
