@@ -169,6 +169,10 @@ check "a block's end drops the rest" skill.rs command each_tool_gets_its_own_ski
 check "new items are not told"      server.rs server the_owner_is_told_of_new_items_and_unseen_presses 's/\.filter\(\|i\| i\.id > after_item\)/.filter(|i| i.id > after_item \&\& false)/'
 check "an unseen press is not told" server.rs server the_owner_is_told_of_new_items_and_unseen_presses 's/if !unseen\.is_empty\(\) \{/if false {/'
 check "old items are news"          server.rs server the_owner_is_told_of_new_items_and_unseen_presses 's/Ok\(\(items\.iter\(\)\.map\(\|i\| i\.id\)\.max\(\)\.unwrap_or\(0\), press\)\)/Ok((0, press))/'
+check "a wait is not announced"     live.rs command a_wait_announces_itself_while_it_runs 's/std::fs::write\(&path, body\.to_string\(\)\)\.ok\(\)\?;/None::<()>?;/'
+check "an ended wait still counts"  live.rs live liveness_comes_from_live_processes_only 's/if !process_alive\(pid\) \{/if false {/'
+check "an ended claude session runs" live.rs live liveness_comes_from_live_processes_only 's/pid > 0 \&\& process_alive\(pid\)/pid > 0/'
+check "the tree drops liveness"     server.rs server the_tree_tells_whether_each_session_lives 's/"live": if waiting/"live_": if waiting/'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 

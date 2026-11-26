@@ -6,6 +6,7 @@
 
 pub mod hook;
 pub mod identity;
+pub mod live;
 pub mod names;
 pub mod notify;
 pub mod server;
@@ -56,4 +57,27 @@ pub fn home_dir() -> Option<PathBuf> {
         .filter(|h| !h.is_empty())
         .map(PathBuf::from)
         .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
+}
+
+/// Whether a process still runs. On Linux from `/proc`, where a zombie (ended, not yet reaped)
+/// counts as gone; elsewhere on Unix by `kill -0`. Where that cannot be told, it counts as running,
+/// and the wait's time limit ends it.
+pub fn process_alive(pid: u32) -> bool {
+    if !cfg!(unix) {
+        return true;
+    }
+    if cfg!(target_os = "linux") {
+        return std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+            stat.rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().next())
+                .is_some_and(|state| state != "Z")
+        });
+    }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true)
 }

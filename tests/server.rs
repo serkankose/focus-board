@@ -32,6 +32,17 @@ impl Board {
         projects: Option<PathBuf>,
         notifier: Option<focus_board::notify::Notifier>,
     ) -> Board {
+        Board::start_with_watcher(
+            projects.map(|p| focus_board::names::NameWatcher::new(p, None)),
+            notifier,
+        )
+    }
+
+    /// The same, with a name watcher of the test's own.
+    fn start_with_watcher(
+        watcher: Option<focus_board::names::NameWatcher>,
+        notifier: Option<focus_board::notify::Notifier>,
+    ) -> Board {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("board.sqlite");
         let item = NewItem {
@@ -56,14 +67,9 @@ impl Board {
                 .unwrap();
             runtime.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                focus_board::server::serve(
-                    listener,
-                    store,
-                    projects.map(|p| focus_board::names::NameWatcher::new(p, None)),
-                    notifier,
-                )
-                .await
-                .unwrap();
+                focus_board::server::serve(listener, store, watcher, notifier)
+                    .await
+                    .unwrap();
             });
         });
         Board {
@@ -705,4 +711,45 @@ fn the_owner_is_told_of_new_items_and_unseen_presses() {
         !said.contains("B1 from"),
         "an item from before the start is not news: {said}"
     );
+}
+
+/// The tree tells whether each session lives (owner, 2026-11-26, B45 "b"): running, from Claude
+/// Code's list of running sessions, or waiting, from a wait's own announcement.
+#[test]
+fn the_tree_tells_whether_each_session_lives() {
+    let dir = tempfile::tempdir().unwrap();
+    let (projects, registry, waits) = (
+        dir.path().join("projects"),
+        dir.path().join("sessions"),
+        dir.path().join("waits"),
+    );
+    for d in [&projects, &registry, &waits] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let me = std::process::id();
+    std::fs::write(
+        registry.join("1.json"),
+        format!(r#"{{"pid":{me},"sessionId":"s1"}}"#),
+    )
+    .unwrap();
+    let watcher = focus_board::names::NameWatcher::new(projects, Some(registry))
+        .with_waits(Some(waits.clone()));
+    let board = Board::start_with_watcher(Some(watcher), None);
+    let live = |board: &Board| {
+        let (_, tree) = board.get("/api/tree");
+        tree["writers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["session_id"] == "s1")
+            .map(|w| w["live"].clone())
+            .unwrap()
+    };
+    assert_eq!(live(&board), json!("running"));
+    std::fs::write(
+        waits.join(format!("{me}.json")),
+        r#"{"session_id":"s1","agent_id":""}"#,
+    )
+    .unwrap();
+    assert_eq!(live(&board), json!("waiting"));
 }

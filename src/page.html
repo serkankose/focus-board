@@ -37,6 +37,9 @@ nav button.node.selected { background: var(--chip); border-color: var(--line); }
 nav button.node[data-count]::after { content: attr(data-count); float: right; min-width: 1.6em; margin-left: 6px; padding: 0 6px; border-radius: 999px;
   background: var(--chip); color: var(--muted); font-size: 0.75em; line-height: 1.7; text-align: center;
   font-variant-numeric: tabular-nums; }
+nav button.node .live::before { content: "●"; margin-left: 6px; font-size: 0.7em; vertical-align: 1px; }
+nav button.node .live.waiting::before { color: var(--answered); }
+nav button.node .live.running::before { color: var(--muted); }
 nav button.node.waiting[data-count]::after { background: var(--open); color: var(--card); font-weight: 600; }
 section { padding: 12px 16px; min-width: 0; }
 table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
@@ -303,7 +306,10 @@ function renderTree() {
   // Under each writer: its agents, and the sessions copied from it (/branch, /fork), at any depth.
   const childrenOf = (w) => sessions.filter((c) => c.parent === w.id);
   const branch = (w) => [w.id, ...childrenOf(w).flatMap(branch)];
-  const sessionNode = (w) => node("writer", w.id, w.agent_id ? (w.agent_type || "agent") + " " + w.agent_id.slice(0, 8) : marked(w),
+  // Whether the session lives (owner, 2026-11-26, B45 "b"): a dot drawn by CSS, so the text stays.
+  const LIVE = { waiting: "has a wait running: a press or an answer wakes it", running: "running, with no wait" };
+  const liveDot = (w) => (w.live ? el("span", { class: "live " + w.live, title: LIVE[w.live] }) : null);
+  const sessionNode = (w) => node("writer", w.id, [w.agent_id ? (w.agent_type || "agent") + " " + w.agent_id.slice(0, 8) : marked(w), liveDot(w)],
     (TOOLS[w.tool] ? TOOLS[w.tool][1] + " · " : "") + (w.agent_id || w.session_id), clock(w.last_at), childrenOf(w).map(sessionNode),
     active.filter((i) => branch(w).includes(i.author)));
   const tops = sessions.filter((s) => !s.agent_id && !sessions.some((p) => p.id === s.parent));
@@ -511,7 +517,9 @@ function renderReview(review) {
   if (!review.latest) { line.hidden = true; return; }
   const seen = review.sessions.filter((s) => s.seen);
   const waiting = review.sessions.filter((s) => !s.seen);
-  const names = (list) => list.map((s) => label(s.writer) + (s.seen ? " (" + s.seen.how + ")" : "")).join(", ");
+  // A Claude Code session that no longer runs cannot be typed to (B45 "b").
+  const gone = (id) => { const w = writer(id); return w && w.tool === "claude" && !w.live; };
+  const names = (list) => list.map((s) => label(s.writer) + (s.seen ? " (" + s.seen.how + ")" : gone(s.writer) ? " (gone)" : "")).join(", ");
   line.hidden = false;
   line.replaceChildren(
     "Review asked " + clock(review.latest.asked_at) + ". ",

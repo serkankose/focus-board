@@ -21,6 +21,7 @@ use tokio::net::TcpListener;
 use crate::names::{NameWatcher, Places, tool_of};
 use crate::notify::{Notifier, shorten};
 use crate::store::{Cell, Filter, ItemId, Store, WriteError, Writer, label_in};
+use std::path::PathBuf;
 
 /// The header every write must carry. A cross-site form cannot send a custom header.
 pub const WRITE_HEADER: &str = "x-focus-board";
@@ -42,6 +43,8 @@ struct App {
     /// Where each session's tool is told from (#361): Claude Code's transcripts, Copilot's
     /// session state. `None` without a name watcher.
     tools: Arc<Option<Places>>,
+    /// Where liveness is read (B45 "b"): Claude Code's running sessions, and the waits.
+    live: Arc<Option<(Option<PathBuf>, Option<PathBuf>)>>,
 }
 
 /// How often the server looks for renamed sessions.
@@ -62,6 +65,7 @@ pub async fn serve(
         hosts: Arc::new([format!("127.0.0.1:{port}"), format!("localhost:{port}")]),
         renames: Arc::new(AtomicU64::new(0)),
         tools: Arc::new(watcher.as_ref().map(NameWatcher::dirs)),
+        live: Arc::new(watcher.as_ref().map(NameWatcher::live_places)),
     };
     if let Some(watcher) = watcher {
         tokio::spawn(watch_renames(app.clone(), watcher));
@@ -380,6 +384,19 @@ async fn items(State(app): State<App>, Query(q): Query<HashMap<String, String>>)
 /// Every writer, with its label, its parent and when it last wrote.
 async fn tree(State(app): State<App>) -> ApiResult {
     let tools = app.tools.clone();
+    let (running, waiting) = match app.live.as_ref() {
+        Some((registry, waits)) => (
+            registry
+                .as_deref()
+                .map(crate::live::running_claude)
+                .unwrap_or_default(),
+            waits
+                .as_deref()
+                .map(crate::live::waiting)
+                .unwrap_or_default(),
+        ),
+        None => Default::default(),
+    };
     on_store(&app, move |store| {
         let last: HashMap<i64, (i64, String)> = store
             .last_writes()?
@@ -402,6 +419,13 @@ async fn tree(State(app): State<App>) -> ApiResult {
                     "project": w.project,
                     "workspace": w.workspace,
                     "name": w.name,
+                    "live": if waiting.contains(&(w.session_id.clone(), w.agent_id.clone())) {
+                        Some("waiting")
+                    } else if w.agent_id.is_empty() && running.contains(&w.session_id) {
+                        Some("running")
+                    } else {
+                        None
+                    },
                     "tool": tools.as_ref().as_ref().and_then(|(projects, copilot, opencode)| {
                         tool_of(projects, copilot.as_deref(), opencode.as_deref(), &w.session_id)
                     }),

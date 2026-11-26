@@ -48,7 +48,9 @@ impl Board {
             .env("FOCUS_BOARD_SESSIONS", self.dir.path().join("sessions"))
             // And Copilot's session folder, never the real one.
             .env("FOCUS_BOARD_COPILOT", self.dir.path().join("copilot"))
-            .env("FOCUS_BOARD_OPENCODE", self.dir.path().join("opencode.db"));
+            .env("FOCUS_BOARD_OPENCODE", self.dir.path().join("opencode.db"))
+            // Waits announce themselves here, never in the real state folder.
+            .env("FOCUS_BOARD_WAITS", self.dir.path().join("waits"));
         if let Some((session, agent, agent_type)) = who {
             c.env("FOCUS_BOARD_SESSION", session)
                 .env("FOCUS_BOARD_AGENT", agent)
@@ -1172,4 +1174,30 @@ fn board_free_skill(tool: &str) -> String {
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     String::from_utf8(out.stdout).unwrap()
+}
+
+/// A wait announces itself while it runs (owner, 2026-11-26, B45 "b"), and its file goes when it
+/// ends.
+#[test]
+fn a_wait_announces_itself_while_it_runs() {
+    let board = Board::new();
+    board.ok(S, &["add", "First?"]);
+    let waits = board.dir.path().join("waits");
+    let mut child = board
+        .command(S, "work")
+        .args(["wait", "--mine", "--timeout", "3"])
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let files: Vec<_> = std::fs::read_dir(&waits).unwrap().flatten().collect();
+    assert_eq!(files.len(), 1, "one announcement while it runs");
+    let body = std::fs::read_to_string(files[0].path()).unwrap();
+    assert!(body.contains("sess-1"), "{body}");
+    assert!(child.wait().unwrap().success());
+    assert_eq!(
+        std::fs::read_dir(&waits).unwrap().count(),
+        0,
+        "gone when it ends"
+    );
 }

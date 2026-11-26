@@ -663,6 +663,11 @@ fn search(typed: &str, as_json: bool) -> Result<(), String> {
 fn wait(item: &str, after: Option<i64>, timeout: Option<u64>) -> Result<(), String> {
     use std::time::{Duration, Instant};
     let id = parse_item(item)?;
+    // Shown on the page as waiting while this runs (B45 "b").
+    let _mark = Identity::from_env().ok().and_then(|me| {
+        focus_board::live::waits_dir()
+            .and_then(|dir| focus_board::live::announce_wait(&dir, &me.session_id, &me.agent_id))
+    });
     let store = open()?;
     let items = store.items(&Filter::default()).map_err(|e| e.to_string())?;
     if !items.iter().any(|i| i.id == id) {
@@ -714,6 +719,9 @@ fn wait_mine(timeout: Option<u64>) -> Result<(), String> {
     use std::time::{Duration, Instant};
     let err = |e: rusqlite::Error| e.to_string();
     let me = Identity::from_env().map_err(|e| e.to_string())?;
+    // Shown on the page as waiting while this runs (B45 "b").
+    let _mark = focus_board::live::waits_dir()
+        .and_then(|dir| focus_board::live::announce_wait(&dir, &me.session_id, &me.agent_id));
     let store = open()?;
     let Some(writer) = store.find_writer(&me).map_err(err)? else {
         println!("You have no items on the board: nothing to wait for.");
@@ -774,7 +782,7 @@ fn wait_mine(timeout: Option<u64>) -> Result<(), String> {
         if let Some(pid) = session
             && checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(2))
         {
-            if !alive(pid) {
+            if !focus_board::process_alive(pid) {
                 return Ok(());
             }
             checked = Some(Instant::now());
@@ -869,29 +877,6 @@ fn process_info(pid: u32) -> Option<(u32, String)> {
         parent.trim().parse().ok()?,
         command.split_whitespace().next()?.to_string(),
     ))
-}
-
-/// Whether a process still runs. On Linux from `/proc`, where a zombie (ended, not yet reaped)
-/// counts as gone; elsewhere on Unix by `kill -0`. Where that cannot be told, it counts as running,
-/// and the wait's time limit ends it.
-fn alive(pid: u32) -> bool {
-    if !cfg!(unix) {
-        return true;
-    }
-    if cfg!(target_os = "linux") {
-        return std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-            stat.rsplit_once(')')
-                .and_then(|(_, rest)| rest.split_whitespace().next())
-                .is_some_and(|state| state != "Z")
-        });
-    }
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(true)
 }
 
 fn add(

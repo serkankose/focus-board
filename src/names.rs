@@ -236,6 +236,7 @@ pub struct NameWatcher {
     registry: Option<PathBuf>,
     copilot: Option<PathBuf>,
     opencode: Option<PathBuf>,
+    waits: Option<PathBuf>,
     sessions: HashMap<String, Watched>,
 }
 
@@ -247,6 +248,7 @@ impl NameWatcher {
             registry,
             copilot: None,
             opencode: None,
+            waits: None,
             sessions: HashMap::new(),
         }
     }
@@ -258,6 +260,18 @@ impl NameWatcher {
             self.copilot.clone(),
             self.opencode.clone(),
         )
+    }
+
+    /// Where liveness is read (B45 "b"): Claude Code's running-session list, and the waits'
+    /// own announcements.
+    pub fn live_places(&self) -> (Option<PathBuf>, Option<PathBuf>) {
+        (self.registry.clone(), self.waits.clone())
+    }
+
+    /// Also reads which sessions have a wait running, from `dir` (see `live::waits_dir`).
+    pub fn with_waits(mut self, dir: Option<PathBuf>) -> NameWatcher {
+        self.waits = dir;
+        self
     }
 
     /// Also names opencode sessions from opencode's database (see [`opencode_name`]).
@@ -277,7 +291,8 @@ impl NameWatcher {
         Some(
             NameWatcher::new(projects_dir()?, registry_dir())
                 .with_copilot(copilot_dir())
-                .with_opencode(opencode_db()),
+                .with_opencode(opencode_db())
+                .with_waits(crate::live::waits_dir()),
         )
     }
 
