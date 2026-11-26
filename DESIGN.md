@@ -231,7 +231,11 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   `server()` hooks (`bash`, a string output) are kept. Names come from the `title` in opencode's database
   (`~/.local/share/opencode/opencode.db`, table `session_v2` since 2.x, else `session`;
   `FOCUS_BOARD_OPENCODE` overrides), read-only, except its
-  placeholder "New session - <date>"; the tool mark is ⬡. `checks/opencode-check.mjs` drives the
+  placeholder "New session - <date>"; the tool mark is ⬡. opencode also reads `~/.claude/skills`; its own
+  copy in `~/.config/opencode/skills/focus-board/` wins, and tells a session to run `wait --mine`
+  with its shell tool: opencode (2.3.1 and later) moves a command still running at its timeout to
+  the background and wakes the session when it ends. The owner's live test passed (2026-11-26,
+  B43 "a"), so no plugin-side watcher is built. `checks/opencode-check.mjs` drives the
   plugin on a scratch board without opencode.
 - **Copilot gets the note after the command** (owner, 2026-11-22, B34 "a"). Copilot runs the same
   hook from its own hook file, and its rewrite works, but it never shows a note given before a
