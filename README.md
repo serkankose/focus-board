@@ -54,9 +54,10 @@ Sessions show a name, never an id: the first of these that exists.
 A rename shows on the page within a few seconds. A mark before the name tells the tool: ✻ Claude
 Code, ◈ GitHub Copilot, ⬡ opencode.
 
-## For Claude Code sessions
+## For agent sessions
 
-The `focus-board` skill tells a session when and how to use the board. In short:
+Claude Code, GitHub Copilot CLI and opencode sessions all use the board the same way. Each tool's
+copy of the `focus-board` skill tells a session when and how. In short:
 
 ```sh
 focus-board add "Question?" -o a="first option" -o b="second option" --recommend a
@@ -69,8 +70,8 @@ focus-board feedback B12 "my view" --pick b
 focus-board status B12 closed     # close your own item once it is settled
 ```
 
-- **Run `focus-board` as the first word** of the command. A hook adds the session's identity
-  there.
+- **Run `focus-board` as the first word** of the command. The tool's hook adds the session's
+  identity there.
 - **Never set the identity variables yourself**: `FOCUS_BOARD_SESSION`, `FOCUS_BOARD_AGENT`,
   `FOCUS_BOARD_AGENT_TYPE` and `FOCUS_BOARD_TRANSCRIPT`. The hook refuses any command whose text
   assigns one, even in a heredoc or a search pattern, so that a subagent cannot write as its
@@ -78,6 +79,10 @@ focus-board status B12 closed     # close your own item once it is settled
   `FOCUS_BOARD_DB`, are not checked.
 - **Only you answer.** A session's write is never your answer, and `focus-board answer` is always
   refused. This guards against mistakes. It is not a lock, since every session runs as you.
+### Claude Code
+
+- The hook is an entry in `~/.claude/settings.json`; the review note comes before the command.
+- A wait runs as a background Bash command (`run_in_background`).
 - **In auto mode**, send a board command in a response of its own, not alongside other tool calls.
   The hook's rewrite can cancel auto mode's review of the calls sent with it, and sometimes of the
   board command itself. A command that only mentions `focus-board` in backticks or at the start of
@@ -88,9 +93,25 @@ focus-board status B12 closed     # close your own item once it is settled
   runs as the rewritten `export …` command. Answer "Yes". Never choose "don't ask again for:
   export *": that would also allow `export X=$(…)`, which runs any command.
 
-## Installing (Linux)
+### GitHub Copilot CLI
 
-From the repository's folder:
+- The hook is `~/.copilot/hooks/focus-board.json`. Copilot shows no note given before a command,
+  so the review note follows the command's output.
+- A wait runs as a detached background shell command; Copilot wakes the session when it ends.
+- On Windows, Copilot's shell is PowerShell, where the identity rewrite does not work yet.
+
+### opencode
+
+- The hook is a plugin, `~/.config/opencode/plugins/focus-board.js`; the note follows the output.
+  opencode also reads `~/.claude/skills`, but its own copy of the skill wins.
+- A wait runs with the shell tool: opencode moves a command still running at its timeout to the
+  background and wakes the session when it ends.
+- opencode 2 runs as a background service, so the plugin and its shell commands use the
+  service's environment. To try things on a scratch board, use `opencode run --standalone`.
+
+## Installing
+
+From the repository's folder, on Linux:
 
 ```sh
 install/linux.sh            # build, install, and start the board's service
@@ -100,9 +121,11 @@ install/linux.sh --remove   # stop the service; the board itself is kept
 The script installs `focus-board` on your `PATH` and runs the board as a systemd user service,
 which starts when you log in. Two more pieces live in your own Claude Code settings:
 
-- **The hook**, in `~/.claude/settings.json`: add this entry to the `PreToolUse` list under
-  `"hooks"`, and create the list if there is none. Pasting a whole `"PreToolUse"` key would
-  replace the hooks already there.
+- **The hook**, in `~/.claude/settings.json`: the installer runs `focus-board install-hook`,
+  which adds this entry to the `PreToolUse` list and changes nothing else (a copy of the previous
+  file is kept as `settings.json.focus-board-backup`; `--remove` takes it out). By hand, add the
+  entry to the list rather than pasting a whole `"PreToolUse"` key, which would replace the hooks
+  already there.
 
   ```json
   { "matcher": "Bash", "hooks": [{ "type": "command",
@@ -130,7 +153,10 @@ note comes after the command's output instead:
 to `~/.config/opencode/plugins/` when opencode is installed; it calls the same `focus-board hook` commands before and after
 each bash call, and the review note comes after the output, as for Copilot.
 
-The code also builds for Windows and macOS, but there is no installer for them yet.
+On macOS, `install/macos.sh` does the same with a launchd agent (log in
+`~/Library/Logs/focus-board/`); on Windows, `install\windows.ps1` with a scheduled task at logon
+(log in `%LOCALAPPDATA%\focus-board\`). Both are untested: there is no Mac or Windows machine
+to try them on yet.
 
 ## Where things are
 

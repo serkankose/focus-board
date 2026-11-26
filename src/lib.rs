@@ -6,6 +6,7 @@
 
 pub mod hook;
 pub mod identity;
+pub mod install;
 pub mod live;
 pub mod names;
 pub mod notify;

@@ -2,7 +2,7 @@
 //! whether or not the page's server is running.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -118,6 +118,15 @@ enum Cmd {
         words: Vec<String>,
         #[arg(long)]
         json: bool,
+    },
+    /// Add the board's hook to Claude Code's settings (~/.claude/settings.json), changing nothing
+    /// else, or take it out with --remove. A copy of the previous file is kept beside it.
+    InstallHook {
+        #[arg(long)]
+        remove: bool,
+        /// Another settings file, instead of ~/.claude/settings.json.
+        #[arg(long, value_name = "PATH")]
+        settings: Option<PathBuf>,
     },
     /// Print the focus-board skill as one tool reads it: claude, copilot or opencode.
     Skill {
@@ -267,6 +276,20 @@ fn run(cmd: Cmd) -> Result<(), String> {
             timeout,
             ..
         } => wait(item.as_deref().unwrap_or_default(), after, timeout),
+        Cmd::InstallHook { remove, settings } => {
+            use focus_board::install::{Outcome, claude_settings, install_hook};
+            let path = settings
+                .or_else(claude_settings)
+                .ok_or("no home folder for Claude Code's settings")?;
+            let said = match install_hook(&path, remove)? {
+                Outcome::Added => "added the hook to",
+                Outcome::AlreadyThere => "the hook is already in",
+                Outcome::Removed => "removed the hook from",
+                Outcome::NotThere => "no hook to remove in",
+            };
+            println!("{said} {}", path.display());
+            Ok(())
+        }
         Cmd::Skill { tool } => match focus_board::skill::skill_for(&tool) {
             Some(text) => {
                 print!("{text}");

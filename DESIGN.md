@@ -273,6 +273,15 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   the age is highlighted. "Order: waiting longest" sorts by that (follow-ups stay under their
   item); the default order is unchanged. All on the page, from the cells' times.
 
+## The hook installer (owner, 2026-11-26, B45 "d")
+
+- `focus-board install-hook [--remove] [--settings PATH]` adds the `PreToolUse` Bash hook to
+  `~/.claude/settings.json`, or takes it out, and `install/linux.sh` runs it. Only that entry
+  changes: serde_json keeps key order (`preserve_order`), the two-space layout and the final
+  newline stay (the owner's file round-trips byte for byte), a copy of the previous file is kept
+  as `settings.json.focus-board-backup`, the new file replaces the old in one rename, a second run
+  changes nothing, and a file that is not JSON is left alone.
+
 ## The command
 
 | Command | Does |
@@ -362,13 +371,14 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
 | *(owner's ask, B37 "a")* Late waits see earlier answers; Copilot waits end with their session | `wait_mine_reports_an_answer_given_while_no_wait_ran`, `wait_mine_ends_when_its_copilot_process_ends` |
+| *(owner's ask, B45 "d")* The hook installer | `the_hook_installer_touches_only_its_hook` |
 | *(owner's ask, B45 "c")* Ageing | the page checks "each waiting item says on whom" and "ordering by waiting keeps the rows" |
 | *(owner's ask, B45 "b")* Session liveness | `a_wait_announces_itself_while_it_runs`, `liveness_comes_from_live_processes_only`, `the_tree_tells_whether_each_session_lives` |
 | *(owner's ask, B45 "a")* Desktop notifications | `the_owner_is_told_of_new_items_and_unseen_presses` |
 | *(owner's ask, B44 "a")* One skill template, each tool its own parts | `each_tool_gets_its_own_skill` |
 | *(owner's ask)* opencode: the plugin, names, mark | `checks/opencode-check.mjs` (8 checks, both APIs), `opencode_sessions_have_their_names_and_mark`, `an_opencode_session_writes_under_its_title` |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 119 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 123 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next
@@ -428,8 +438,11 @@ right after "#122/b"; the later one stands). Review 04 listed what a port touche
 - **Unverified until a run on that OS:**
   - P5: the hook's POSIX `export` prefix (Claude Code's Bash tool on Windows runs Git Bash);
   - P7: tests and checks need bash, git and Firefox.
-- **Waits for a machine to try:** P6, the install recipe per OS (launchd, a scheduled task). Step 6
-  is the Linux one.
+- **Written, waiting for a machine to try** (owner, 2026-11-26, B45 "e"): P6, the install recipe
+  per OS. `install/macos.sh` (a launchd agent; the skill and hooks through the shared
+  `install/tools.sh`) parses with `bash -n`; `install/windows.ps1` (a scheduled task at logon) has
+  not been parsed, as there is no PowerShell here. Copilot on Windows runs PowerShell, where the
+  `export` rewrite does not work, so that installer leaves Copilot's hook out.
 
 ## Open, the owner's call
 

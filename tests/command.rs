@@ -1201,3 +1201,73 @@ fn a_wait_announces_itself_while_it_runs() {
         "gone when it ends"
     );
 }
+
+/// The hook installer (owner, 2026-11-26, B45 "d") adds the board's hook to Claude Code's settings
+/// and changes nothing else: other settings keep their values and places, other hooks stay, a copy
+/// of the previous file is kept; a second run changes nothing; --remove gives back the file as it
+/// was; a file that is not JSON is left alone.
+#[test]
+fn the_hook_installer_touches_only_its_hook() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.json");
+    let before = "{\n  \"model\": \"opus\",\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool\"\n          }\n        ]\n      }\n    ]\n  },\n  \"zeta\": 1\n}\n";
+    std::fs::write(&settings, before).unwrap();
+    let path = settings.to_str().unwrap().to_string();
+    let run = |args: &[&str]| {
+        Command::new(BIN)
+            .args(["install-hook", "--settings", &path])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let said = |args: &[&str]| {
+        let out = run(args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap();
+
+    assert!(said(&[]).contains("added"));
+    let after = read(&settings);
+    let value: Value = serde_json::from_str(&after).unwrap();
+    let keys: Vec<&String> = value.as_object().unwrap().keys().collect();
+    assert_eq!(
+        keys,
+        ["model", "hooks", "zeta"],
+        "every setting keeps its place"
+    );
+    assert_eq!(
+        value["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "other-tool"
+    );
+    assert_eq!(value["hooks"]["PreToolUse"][1]["matcher"], "Bash");
+    let ours = value["hooks"]["PreToolUse"][1]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(
+        ours.contains("focus-board") && ours.contains("hook pre-tool-use"),
+        "{ours}"
+    );
+    assert!(after.ends_with("}\n"), "the final newline stays");
+    assert_eq!(
+        read(&settings.with_extension("json.focus-board-backup")),
+        before
+    );
+
+    assert!(said(&[]).contains("already"));
+    assert_eq!(read(&settings), after, "a second run changes nothing");
+    assert!(said(&["--remove"]).contains("removed"));
+    assert_eq!(
+        read(&settings),
+        before,
+        "removing gives back the file as it was"
+    );
+
+    std::fs::write(&settings, "{ not json").unwrap();
+    assert!(!run(&[]).status.success());
+    assert_eq!(
+        read(&settings),
+        "{ not json",
+        "a file that is not JSON is left alone"
+    );
+}

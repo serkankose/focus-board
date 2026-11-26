@@ -11,7 +11,8 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-const BIN = process.env.FOCUS_BOARD_BIN || path.join(os.homedir(), ".cargo", "bin", "focus-board");
+const BIN = process.env.FOCUS_BOARD_BIN
+  || path.join(os.homedir(), ".cargo", "bin", process.platform === "win32" ? "focus-board.exe" : "focus-board");
 const SHELL_TOOLS = new Set(["shell", "bash"]);
 
 function hook(kind, sessionID, command, extra) {
