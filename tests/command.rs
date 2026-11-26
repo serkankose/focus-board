@@ -1271,3 +1271,43 @@ fn the_hook_installer_touches_only_its_hook() {
         "a file that is not JSON is left alone"
     );
 }
+
+/// The hook installer never loosens the settings' permissions (security review, 2026-11-26): the
+/// settings can hold secrets, so the new file and the copy keep the original's mode, and a symlink
+/// planted at the copy's path is replaced, never followed.
+#[cfg(unix)]
+#[test]
+fn the_hook_installer_keeps_the_settings_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.json");
+    std::fs::write(
+        &settings,
+        "{\n  \"env\": {\n    \"TOKEN\": \"secret\"\n  }\n}\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&settings, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let elsewhere = dir.path().join("elsewhere.txt");
+    std::fs::write(&elsewhere, "not to be touched").unwrap();
+    let backup = settings.with_extension("json.focus-board-backup");
+    std::os::unix::fs::symlink(&elsewhere, &backup).unwrap();
+    let out = Command::new(BIN)
+        .args(["install-hook", "--settings", settings.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let mode =
+        |p: &std::path::Path| std::fs::symlink_metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&settings), 0o600, "the new settings stay private");
+    assert_eq!(mode(&backup), 0o600, "so does the copy");
+    assert!(
+        !std::fs::symlink_metadata(&backup)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&elsewhere).unwrap(),
+        "not to be touched"
+    );
+}

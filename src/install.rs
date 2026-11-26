@@ -107,12 +107,47 @@ pub fn install_hook(path: &Path, remove: bool) -> Result<Outcome, String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
+    // The settings can hold secrets: the copy and the new file get the original's permissions
+    // (0600 when there is none), never the default mode (security review, 2026-11-26).
+    let original = std::fs::metadata(path).ok().map(|m| m.permissions());
     if let Some(old) = &text {
-        let backup = path.with_extension("json.focus-board-backup");
-        std::fs::write(&backup, old).map_err(|e| format!("{}: {e}", backup.display()))?;
+        write_private(
+            &path.with_extension("json.focus-board-backup"),
+            old,
+            original.as_ref(),
+        )?;
     }
     let temporary = path.with_extension("json.focus-board-new");
-    std::fs::write(&temporary, new_text).map_err(|e| format!("{}: {e}", temporary.display()))?;
+    write_private(&temporary, &new_text, original.as_ref())?;
     std::fs::rename(&temporary, path).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(outcome)
+}
+
+/// Writes `text` to a new file at `path`: whatever was there is removed first and the file is
+/// created afresh (`create_new`), so a leftover or a symlink planted there is never followed. It is
+/// created readable by the owner only, then given `like`'s permissions.
+fn write_private(
+    path: &Path,
+    text: &str,
+    like: Option<&std::fs::Permissions>,
+) -> Result<(), String> {
+    use std::io::Write;
+    let failed = |e: std::io::Error| format!("{}: {e}", path.display());
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(failed(e)),
+        _ => {}
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(failed)?;
+    file.write_all(text.as_bytes()).map_err(failed)?;
+    if let Some(permissions) = like {
+        std::fs::set_permissions(path, permissions.clone()).map_err(failed)?;
+    }
+    Ok(())
 }
