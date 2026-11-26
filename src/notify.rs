@@ -39,7 +39,13 @@ impl Notifier {
     pub fn send(&self, title: &str, body: &str) {
         let name = self.program.rsplit(['/', '\\']).next().unwrap_or("");
         let args: Vec<String> = match name {
-            "notify-send" => vec!["--app-name=focus-board".into(), title.into(), body.into()],
+            // Stays until the owner closes it (owner, 2026-11-26: the first test vanished too quickly).
+            "notify-send" => vec![
+                "--app-name=focus-board".into(),
+                "--expire-time=0".into(),
+                title.into(),
+                body.into(),
+            ],
             "osascript" => vec![
                 "-e".into(),
                 format!(

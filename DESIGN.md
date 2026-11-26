@@ -251,7 +251,8 @@ their parent's process, so the shell alone cannot tell a subagent from its paren
   <session>`, the question and the page's address), and when a review press is still unseen by
   some session ten minutes later (who has not seen it), once per press. What was on the board
   when the server started is not news.
-- It runs `notify-send` on Linux, `osascript` on macOS, or the program `FOCUS_BOARD_NOTIFY` names
+- It runs `notify-send` on Linux (`--expire-time=0`: the notification stays until closed; owner,
+  2026-11-26, after a test on KDE Plasma vanished too quickly), `osascript` on macOS, or the program `FOCUS_BOARD_NOTIFY` names
   (`off` turns it off), as `PROGRAM TITLE BODY`; it never waits on it, and a missing program is
   ignored. The systemd user service has the desktop's `DBUS_SESSION_BUS_ADDRESS`.
 
