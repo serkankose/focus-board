@@ -371,14 +371,14 @@ opening the board without it. A refusal exits 1 with the reason on stderr.
 | A wait survives an upgrade of the board while it waits | `a_wait_survives_a_layout_upgrade_while_it_waits` |
 | *(owner's ask, B22 "b")* The review button | `a_review_request_reaches_each_session_once`, `no_note_from_a_missing_board_or_another_layout`, `review_requests_and_seen_marks_are_never_changed`, `a_layout_3_board_gains_review_requests`, `the_hook_passes_the_review_note_on_once`, `wait_mine_ends_on_each_of_its_reasons`, `the_review_button_asks_and_shows_who_has_seen_it`, the unit tests in `hook.rs`, and the page check "the review button asks the sessions" |
 | *(owner's ask, B37 "a")* Late waits see earlier answers; Copilot waits end with their session | `wait_mine_reports_an_answer_given_while_no_wait_ran`, `wait_mine_ends_when_its_copilot_process_ends` |
-| *(owner's ask, B45 "d")* The hook installer | `the_hook_installer_touches_only_its_hook` |
+| *(owner's ask, B45 "d")* The hook installer | `the_hook_installer_touches_only_its_hook`, `the_hook_installer_keeps_the_settings_private` |
 | *(owner's ask, B45 "c")* Ageing | the page checks "each waiting item says on whom" and "ordering by waiting keeps the rows" |
 | *(owner's ask, B45 "b")* Session liveness | `a_wait_announces_itself_while_it_runs`, `liveness_comes_from_live_processes_only`, `the_tree_tells_whether_each_session_lives` |
 | *(owner's ask, B45 "a")* Desktop notifications | `the_owner_is_told_of_new_items_and_unseen_presses` |
 | *(owner's ask, B44 "a")* One skill template, each tool its own parts | `each_tool_gets_its_own_skill` |
 | *(owner's ask)* opencode: the plugin, names, mark | `checks/opencode-check.mjs` (8 checks, both APIs), `opencode_sessions_have_their_names_and_mark`, `an_opencode_session_writes_under_its_title` |
 | *(owner's ask, B34 "a")* Copilot gets the review note after the command | `copilot_gets_the_review_note_after_the_command` |
-| Each rule's test fails with the rule removed | `checks/break-it.sh`: 123 checks |
+| Each rule's test fails with the rule removed | `checks/break-it.sh`: 124 checks |
 
 `update_and_delete_refused` also tries `INSERT OR REPLACE` and `REPLACE`. Those delete the clashing
 row without firing delete triggers, so insert triggers refuse them: a cell only gains its next

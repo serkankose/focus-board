@@ -177,6 +177,7 @@ check "the hook is added twice"     install.rs command the_hook_installer_touche
 check "remove takes other hooks"    install.rs command the_hook_installer_touches_only_its_hook 's/hs\.retain\(\|h\| !ours\(h\)\);/hs.retain(|_| false);/'
 check "no copy of the old settings" install.rs command the_hook_installer_touches_only_its_hook 's/std::fs::write\(&backup, old\)\.map_err\(\|e\| format!\("\{\}: \{e\}", backup\.display\(\)\)\)\?;/let _ = old;/'
 check "bad JSON is overwritten"     install.rs command the_hook_installer_touches_only_its_hook 's/Some\(text\) => serde_json::from_str\(text\)/Some(text) => serde_json::from_str(text).or_else(|_| Ok::<Value, serde_json::Error>(json!({})))/'
+check "the installer loosens permissions" install.rs command the_hook_installer_keeps_the_settings_private 's/if let Some\(permissions\) = like \{/if false \&\& let Some(permissions) = like {/; s/options\.mode\(0o600\);/options.mode(0o644);/'
 check "the feed misses reviews"      server.rs server the_review_button_asks_and_shows_who_has_seen_it 's/"reviews": store\.review_mark\(\)\?,/"reviews": 0,/'
 check "unsafe transcript passed on"  hook.rs command a_copied_session_writes_under_its_parent 's/if is_safe_path\(transcript\) \{/if true || is_safe_path(transcript) {/'
 
